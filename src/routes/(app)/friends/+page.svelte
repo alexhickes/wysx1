@@ -36,6 +36,7 @@
 
 	async function loadFriends() {
 		friends = await getFriends(data.supabase);
+		console.log('Friends:', friends);
 		pendingReceived = await getPendingRequestsReceived(data.supabase);
 		pendingSent = await getPendingRequestsSent(data.supabase);
 	}

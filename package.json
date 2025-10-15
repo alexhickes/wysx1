@@ -37,5 +37,8 @@
 	"dependencies": {
 		"@supabase/ssr": "^0.7.0",
 		"leaflet": "^1.9.4"
+	},
+	"engines": {
+		"node": "22.x"
 	}
 }
