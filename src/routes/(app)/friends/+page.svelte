@@ -381,7 +381,7 @@
 		width: 40px;
 		height: 40px;
 		border: 3px solid #333;
-		border-top-color: #fc4c02;
+		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
 	}
@@ -390,7 +390,7 @@
 		width: 20px;
 		height: 20px;
 		border: 2px solid #333;
-		border-top-color: #fc4c02;
+		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
 	}
@@ -422,7 +422,7 @@
 	}
 
 	.search-bar:focus-within {
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 	}
 
 	.search-icon {
@@ -526,11 +526,11 @@
 	}
 
 	.tab.active .tab-count {
-		color: #fc4c02;
+		color: var(--color-primary);
 	}
 
 	.tab-badge {
-		background: #fc4c02;
+		background: var(--color-primary);
 		color: #fff;
 		padding: 2px 8px;
 		border-radius: 12px;
@@ -548,7 +548,7 @@
 		width: 40px;
 		height: 40px;
 		border-radius: 50%;
-		background: linear-gradient(135deg, #fc4c02 0%, #ff6b35 100%);
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -583,7 +583,7 @@
 	}
 
 	.add-btn {
-		background: #fc4c02;
+		background: var(--color-primary);
 		color: #fff;
 		border: none;
 		padding: 8px 20px;

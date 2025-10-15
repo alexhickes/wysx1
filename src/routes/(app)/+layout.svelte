@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '../../app.css';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import type { LayoutData } from './$types';
@@ -134,7 +135,7 @@
 		width: 36px;
 		height: 36px;
 		border-radius: 50%;
-		background: linear-gradient(135deg, #fc4c02 0%, #ff6b35 100%);
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -177,11 +178,11 @@
 	}
 
 	.nav-item.active {
-		color: #fc4c02;
+		color: var(--color-primary);
 	}
 
 	.nav-item:hover {
-		color: #fc4c02;
+		color: var(--color-primary);
 	}
 
 	.nav-icon {

@@ -1,17 +1,14 @@
 :root {
-	:root {
-		/* Light theme colors */
-		--color-primary: #9a348e;
-		--color-secondary: #0d0628;
-		--color-background: #ffffff;
-		--color-text: #090612;
-		--color-muted: #f9dbbd;
-	}
+	--color-primary: #9a348e;
+	--color-secondary: #0d0628;
+	--color-background: #ffffff;
+	--color-text: #090612;
+	--color-muted: #f9dbbd;
+	--color-tertiary: #ff6b35;
 }
 
 .dark {
 	:root {
-		/* Dark theme colors */
 		--color-primary: #da627d;
 		--color-secondary: #f9dbbd;
 		--color-background: #ffffff;

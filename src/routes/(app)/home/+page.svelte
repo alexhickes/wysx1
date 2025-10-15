@@ -251,7 +251,7 @@
 		width: 40px;
 		height: 40px;
 		border: 3px solid #333;
-		border-top-color: #fc4c02;
+		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
 	}
@@ -406,7 +406,7 @@
 	}
 
 	.activity-card.active {
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 		background: linear-gradient(135deg, rgba(252, 76, 2, 0.1) 0%, rgba(255, 107, 53, 0.05) 100%);
 	}
 
@@ -427,7 +427,7 @@
 		width: 40px;
 		height: 40px;
 		border-radius: 50%;
-		background: linear-gradient(135deg, #fc4c02 0%, #ff6b35 100%);
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -459,7 +459,7 @@
 	}
 
 	.live-badge {
-		background: #fc4c02;
+		background: var(--color-primary);
 		color: #fff;
 		padding: 4px 10px;
 		border-radius: 12px;

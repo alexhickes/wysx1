@@ -698,7 +698,7 @@
 		width: 40px;
 		height: 40px;
 		border: 3px solid #333;
-		border-top-color: #fc4c02;
+		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
 	}
@@ -707,7 +707,7 @@
 		width: 16px;
 		height: 16px;
 		border: 2px solid #333;
-		border-top-color: #fc4c02;
+		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
 		display: inline-block;
@@ -759,7 +759,7 @@
 	}
 
 	.tab.active .tab-count {
-		color: #fc4c02;
+		color: var(--color-primary);
 	}
 
 	/* Content */
@@ -770,7 +770,7 @@
 	/* Create Place Button */
 	.create-place-btn {
 		width: 100%;
-		background: linear-gradient(135deg, #fc4c02 0%, #ff6b35 100%);
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
 		color: #fff;
 		border: none;
 		padding: 16px 24px;
@@ -825,8 +825,8 @@
 	.location-btn {
 		flex: 1;
 		background: #0a0a0a;
-		border: 2px solid #fc4c02;
-		color: #fc4c02;
+		border: 2px solid var(--color-primary);
+		color: var(--color-primary);
 		padding: 16px;
 		border-radius: 8px;
 		font-size: 14px;
@@ -872,8 +872,8 @@
 	}
 
 	.map-btn:hover {
-		border-color: #fc4c02;
-		color: #fc4c02;
+		border-color: var(--color-primary);
+		color: var(--color-primary);
 		background: rgba(252, 76, 2, 0.05);
 	}
 
@@ -951,7 +951,7 @@
 	.form-group textarea:focus,
 	.form-group select:focus {
 		outline: none;
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 	}
 
 	.form-group textarea {
@@ -994,7 +994,7 @@
 	}
 
 	.activity-checkbox:hover {
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 	}
 
 	.activity-checkbox input[type='checkbox'] {
@@ -1040,7 +1040,7 @@
 	}
 
 	.submit-btn {
-		background: linear-gradient(135deg, #fc4c02 0%, #ff6b35 100%);
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
 		color: #fff;
 	}
 
@@ -1072,7 +1072,7 @@
 	}
 
 	.place-card:hover {
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 		transform: translateY(-4px);
 		box-shadow: 0 8px 24px rgba(252, 76, 2, 0.2);
 	}
@@ -1110,7 +1110,7 @@
 
 	.invited-badge {
 		background: rgba(252, 76, 2, 0.2);
-		color: #fc4c02;
+		color: var(--color-primary);
 	}
 
 	.place-name {
@@ -1161,8 +1161,8 @@
 	.group-tag {
 		display: inline-block;
 		background: rgba(252, 76, 2, 0.1);
-		border: 1px solid #fc4c02;
-		color: #fc4c02;
+		border: 1px solid var(--color-primary);
+		color: var(--color-primary);
 		padding: 4px 10px;
 		border-radius: 6px;
 		font-size: 11px;
@@ -1190,7 +1190,7 @@
 	}
 
 	.stat-value {
-		color: #fc4c02;
+		color: var(--color-primary);
 		font-weight: 700;
 	}
 
@@ -1379,7 +1379,7 @@
 	}
 
 	.drawer-confirm {
-		background: linear-gradient(135deg, #fc4c02 0%, #ff6b35 100%);
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
 		color: #fff;
 	}
 

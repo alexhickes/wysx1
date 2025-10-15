@@ -98,7 +98,7 @@
 		// Add place marker
 		placeMarker = L.marker([place.latitude, place.longitude], {
 			icon: L.divIcon({
-				html: '<div style="background: #FC4C02; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>',
+				html: '<div style="background: #9A348E; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>',
 				className: '',
 				iconSize: [20, 20],
 				iconAnchor: [10, 10]
@@ -108,8 +108,8 @@
 		// Add radius circle
 		radiusCircle = L.circle([place.latitude, place.longitude], {
 			radius: place.radius,
-			color: '#FC4C02',
-			fillColor: '#FC4C02',
+			color: 'var(--color-primary)',
+			fillColor: 'var(--color-primary)',
 			fillOpacity: 0.1,
 			weight: 2
 		}).addTo(map);
@@ -485,7 +485,7 @@
 		width: 40px;
 		height: 40px;
 		border: 3px solid #333;
-		border-top-color: #fc4c02;
+		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
 	}
@@ -511,7 +511,7 @@
 	.back-btn {
 		background: transparent;
 		border: none;
-		color: #fc4c02;
+		color: var(--color-primary);
 		font-size: 16px;
 		font-weight: 600;
 		cursor: pointer;
@@ -525,8 +525,8 @@
 
 	.edit-btn {
 		background: #0a0a0a;
-		border: 1px solid #fc4c02;
-		color: #fc4c02;
+		border: 1px solid var(--color-primary);
+		color: var(--color-primary);
 		padding: 8px 16px;
 		border-radius: 8px;
 		font-size: 14px;
@@ -631,7 +631,7 @@
 	.stat-value {
 		font-size: 24px;
 		font-weight: 700;
-		color: #fc4c02;
+		color: var(--color-primary);
 		margin-bottom: 4px;
 	}
 
@@ -660,7 +660,7 @@
 	}
 
 	.create-group-btn {
-		background: #fc4c02;
+		background: var(--color-primary);
 		color: #fff;
 		border: none;
 		padding: 8px 16px;
@@ -672,7 +672,7 @@
 	}
 
 	.create-group-btn:hover {
-		background: #ff6b35;
+		background: #7a2971;
 	}
 
 	/* Activities */
@@ -724,7 +724,7 @@
 	}
 
 	.group-item:hover {
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 	}
 
 	.group-info h3 {
@@ -834,7 +834,7 @@
 	.form-group textarea:focus,
 	.form-group select:focus {
 		outline: none;
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 	}
 
 	.form-group textarea {
@@ -866,7 +866,7 @@
 	}
 
 	.activity-checkbox:hover {
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 	}
 
 	.form-actions {
@@ -897,7 +897,7 @@
 	}
 
 	.save-btn {
-		background: linear-gradient(135deg, #fc4c02 0%, #ff6b35 100%);
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
 		color: #fff;
 	}
 
