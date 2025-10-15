@@ -104,7 +104,7 @@
 			<div class="spinner"></div>
 		</div>
 	{:else}
-		<!-- Activity Streak -->
+		<!-- Activity Streak
 		<section class="streak-section">
 			<div class="streak-header">
 				<h2>Your streak</h2>
@@ -133,7 +133,7 @@
 					{/each}
 				</div>
 			</div>
-		</section>
+		</section> -->
 
 		<!-- Active Check-ins -->
 		{#if activeCheckIns.length > 0}
@@ -263,7 +263,8 @@
 	}
 
 	/* Sections */
-	.streak-section,
+	/* Streak Section */
+	/* .streak-section,
 	.active-section,
 	.activity-section {
 		padding: 20px 16px;
@@ -296,9 +297,10 @@
 		margin: 0 0 16px 0;
 		color: #fff;
 	}
+	*/
 
 	/* Streak Card */
-	.streak-card {
+	/*.streak-card {
 		background: #0a0a0a;
 		border-radius: 12px;
 		padding: 24px 0;
@@ -306,25 +308,25 @@
 		align-items: center;
 		gap: 24px;
 		overflow-x: auto;
-		-webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+		-webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS 
 	}
 
 	/* Hide scrollbar but keep functionality */
-	.streak-card::-webkit-scrollbar {
+	/*.streak-card::-webkit-scrollbar {
 		display: none;
 	}
 
 	.streak-card {
-		-ms-overflow-style: none; /* IE and Edge */
-		scrollbar-width: none; /* Firefox */
+		-ms-overflow-style: none; /* IE and Edge */ /*
+		scrollbar-width: none; /* Firefox */ /*
 	}
-
+	
 	.streak-icon {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 4px;
-		flex-shrink: 0; /* Prevent shrinking */
+		flex-shrink: 0; /* Prevent shrinking */ /*
 		padding-left: 16px;
 	}
 
@@ -348,7 +350,7 @@
 	.week-calendar {
 		display: flex;
 		gap: 12px;
-		flex-shrink: 0; /* Prevent calendar from shrinking */
+		flex-shrink: 0; /* Prevent calendar from shrinking */ /*
 		padding-right: 16px;
 	}
 
@@ -392,6 +394,7 @@
 		font-size: 14px;
 		color: #666;
 	}
+	*/
 
 	/* Activity Cards */
 	.activity-card {

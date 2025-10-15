@@ -1,0 +1,21 @@
+:root {
+	:root {
+		/* Light theme colors */
+		--color-primary: #9a348e;
+		--color-secondary: #0d0628;
+		--color-background: #ffffff;
+		--color-text: #090612;
+		--color-muted: #f9dbbd;
+	}
+}
+
+.dark {
+	:root {
+		/* Dark theme colors */
+		--color-primary: #da627d;
+		--color-secondary: #f9dbbd;
+		--color-background: #ffffff;
+		--color-text: #202124;
+		--color-muted: #f1f3f4;
+	}
+}
