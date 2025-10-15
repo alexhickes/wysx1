@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { UpdatePlaceInput } from '../../src/lib/types';
 
 export type Place = {
 	id: string;
