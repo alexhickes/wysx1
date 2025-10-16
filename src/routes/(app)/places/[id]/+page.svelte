@@ -29,7 +29,9 @@
 		place_type: '',
 		radius: 100,
 		is_public: true,
-		selectedActivities: [] as string[]
+		selectedActivities: [] as string[],
+		latitude: 0,
+		longitude: 0
 	};
 
 	// Map
@@ -69,7 +71,9 @@
 			place_type: place.place_type || 'other',
 			radius: place.radius,
 			is_public: place.is_public,
-			selectedActivities: place.place_activities?.map((pa: any) => pa.activity.id) || []
+			selectedActivities: place.place_activities?.map((pa: any) => pa.activity.id) || [],
+			latitude: place.latitude,
+			longitude: place.longitude
 		};
 	}
 
@@ -86,41 +90,126 @@
 	async function initMap() {
 		if (!place || typeof window === 'undefined') return;
 
+		// Check if map container exists in DOM
+		const mapContainer = document.getElementById('place-detail-map');
+		if (!mapContainer) {
+			console.error('Map container not found');
+			return;
+		}
+
 		const leafletModule = await import('leaflet');
 		L = leafletModule.default;
 
-		map = L.map('place-detail-map').setView([place.latitude, place.longitude], 15);
+		try {
+			map = L.map('place-detail-map').setView([place.latitude, place.longitude], 15);
 
-		L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-			attribution: '© OpenStreetMap contributors'
-		}).addTo(map);
+			L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+				attribution: '© OpenStreetMap contributors'
+			}).addTo(map);
 
-		// Add place marker
-		placeMarker = L.marker([place.latitude, place.longitude], {
-			icon: L.divIcon({
-				html: '<div style="background: #9A348E; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>',
+			// Add place marker
+			placeMarker = L.marker([place.latitude, place.longitude], {
+				draggable: false, // Will be made draggable in edit mode
+				icon: L.divIcon({
+					html: '<div style="background: #FC4C02; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>',
+					className: '',
+					iconSize: [20, 20],
+					iconAnchor: [10, 10]
+				})
+			}).addTo(map);
+
+			// Add radius circle
+			radiusCircle = L.circle([place.latitude, place.longitude], {
+				radius: place.radius,
+				color: '#FC4C02',
+				fillColor: '#FC4C02',
+				fillOpacity: 0.1,
+				weight: 2
+			}).addTo(map);
+		} catch (error) {
+			console.error('Error initializing map:', error);
+		}
+	}
+
+	function enableMapEditing() {
+		if (!map || !placeMarker) return;
+
+		// Make marker draggable
+		placeMarker.dragging.enable();
+
+		// Update marker style to indicate it's editable
+		placeMarker.setIcon(
+			L.divIcon({
+				html: '<div style="background: #FC4C02; width: 24px; height: 24px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: move;"></div>',
+				className: '',
+				iconSize: [24, 24],
+				iconAnchor: [12, 12]
+			})
+		);
+
+		// Handle marker drag
+		placeMarker.on('dragend', (e: any) => {
+			const latlng = e.target.getLatLng();
+			editForm.latitude = latlng.lat;
+			editForm.longitude = latlng.lng;
+
+			// Update circle position
+			if (radiusCircle) {
+				radiusCircle.setLatLng([latlng.lat, latlng.lng]);
+			}
+		});
+
+		// Handle map click to move marker
+		map.on('click', (e: any) => {
+			const latlng = e.latlng;
+			editForm.latitude = latlng.lat;
+			editForm.longitude = latlng.lng;
+
+			// Move marker
+			placeMarker.setLatLng([latlng.lat, latlng.lng]);
+
+			// Move circle
+			if (radiusCircle) {
+				radiusCircle.setLatLng([latlng.lat, latlng.lng]);
+			}
+		});
+	}
+
+	function disableMapEditing() {
+		if (!map || !placeMarker) return;
+
+		// Make marker non-draggable
+		placeMarker.dragging.disable();
+
+		// Reset marker style
+		placeMarker.setIcon(
+			L.divIcon({
+				html: '<div style="background: #FC4C02; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>',
 				className: '',
 				iconSize: [20, 20],
 				iconAnchor: [10, 10]
 			})
-		}).addTo(map);
+		);
 
-		// Add radius circle
-		radiusCircle = L.circle([place.latitude, place.longitude], {
-			radius: place.radius,
-			color: 'var(--color-primary)',
-			fillColor: 'var(--color-primary)',
-			fillOpacity: 0.1,
-			weight: 2
-		}).addTo(map);
+		// Remove event listeners
+		placeMarker.off('dragend');
+		map.off('click');
+
+		// Reset marker to saved location
+		placeMarker.setLatLng([place.latitude, place.longitude]);
+		if (radiusCircle) {
+			radiusCircle.setLatLng([place.latitude, place.longitude]);
+		}
 	}
 
 	function startEditing() {
 		editing = true;
+		enableMapEditing();
 	}
 
 	function cancelEditing() {
 		editing = false;
+		disableMapEditing();
 		// Reset form to original values
 		editForm = {
 			name: place.name,
@@ -128,7 +217,9 @@
 			place_type: place.place_type || 'other',
 			radius: place.radius,
 			is_public: place.is_public,
-			selectedActivities: place.place_activities?.map((pa: any) => pa.activity.id) || []
+			selectedActivities: place.place_activities?.map((pa: any) => pa.activity.id) || [],
+			latitude: place.latitude,
+			longitude: place.longitude
 		};
 	}
 
@@ -138,7 +229,7 @@
 			return;
 		}
 
-		// Update place
+		// Update place (including coordinates)
 		const { error: updateError } = await updatePlace(data.supabase, placeId, {
 			name: editForm.name.trim(),
 			description: editForm.description.trim() || null,
@@ -150,6 +241,22 @@
 		if (updateError) {
 			alert('Error updating place: ' + updateError);
 			return;
+		}
+
+		// Update coordinates separately (if they changed)
+		if (editForm.latitude !== place.latitude || editForm.longitude !== place.longitude) {
+			const { error: coordsError } = await data.supabase
+				.from('places')
+				.update({
+					latitude: editForm.latitude,
+					longitude: editForm.longitude
+				})
+				.eq('id', placeId);
+
+			if (coordsError) {
+				alert('Error updating coordinates: ' + coordsError.message);
+				return;
+			}
 		}
 
 		// Update activities
@@ -165,10 +272,14 @@
 		}
 
 		editing = false;
+		disableMapEditing();
 		await loadPlace();
 
-		// Update map radius if changed
-		if (radiusCircle && editForm.radius !== place.radius) {
+		// Update map to new location and radius
+		if (map && placeMarker && radiusCircle) {
+			map.setView([editForm.latitude, editForm.longitude], 15);
+			placeMarker.setLatLng([editForm.latitude, editForm.longitude]);
+			radiusCircle.setLatLng([editForm.latitude, editForm.longitude]);
 			radiusCircle.setRadius(editForm.radius);
 		}
 	}
@@ -244,6 +355,21 @@
 				<!-- Edit Form -->
 				<div class="edit-form">
 					<h2>Edit Place</h2>
+
+					<div class="edit-notice">
+						<strong>📍 Move the marker:</strong> Click anywhere on the map or drag the orange marker
+						to update the location.
+					</div>
+
+					<div class="form-group">
+						<label>Current Location</label>
+						<div class="coords-display">
+							{editForm.latitude.toFixed(6)}, {editForm.longitude.toFixed(6)}
+							{#if editForm.latitude !== place.latitude || editForm.longitude !== place.longitude}
+								<span class="changed-badge">Changed</span>
+							{/if}
+						</div>
+					</div>
 
 					<div class="form-group">
 						<label for="edit-name">Place Name *</label>
@@ -417,7 +543,13 @@
 					{:else}
 						<div class="groups-list">
 							{#each groups as group}
-								<div class="group-item">
+								<div
+									class="group-item"
+									role="button"
+									tabindex={group.id}
+									on:click={() => goto(`/groups/${group.id}`)}
+									on:keydown={() => goto(`/groups/${group.id}`)}
+								>
 									<div class="group-info">
 										<h3>{group.name}</h3>
 										{#if group.description}
@@ -804,6 +936,39 @@
 	.edit-form h2 {
 		margin: 0 0 24px 0;
 		font-size: 22px;
+	}
+
+	.edit-notice {
+		background: rgba(255, 152, 0, 0.1);
+		border: 1px solid var(--color-primary);
+		padding: 12px 16px;
+		border-radius: 8px;
+		margin-bottom: 20px;
+		font-size: 14px;
+		color: var(--color-primary);
+	}
+
+	.coords-display {
+		background: #000;
+		border: 1px solid #333;
+		padding: 12px;
+		border-radius: 8px;
+		font-family: monospace;
+		font-size: 14px;
+		color: #4caf50;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.changed-badge {
+		background: var(--color-primary);
+		color: #000;
+		padding: 2px 8px;
+		border-radius: 4px;
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
 	}
 
 	.form-group {

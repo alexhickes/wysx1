@@ -658,7 +658,7 @@
 	.group-card:hover,
 	.member-card:hover,
 	.place-card:hover {
-		border-color: #fc4c02;
+		border-color: var(--color-primary);
 	}
 
 	.checkin-card {
@@ -782,8 +782,10 @@
 		border: none;
 		background: #4caf50;
 		color: white;
-		font-size: 20px;
 		cursor: pointer;
+		display: flex;
+		justify-content: center;
+		align-items: center;
 	}
 
 	.create-form {
