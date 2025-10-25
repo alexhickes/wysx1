@@ -4,9 +4,7 @@ import { browser } from '$app/environment';
 // VAPID public key - you'll need to generate this
 // Use: npx web-push generate-vapid-keys
 // Then add to your .env file as PUBLIC_VAPID_KEY
-// const VAPID_PUBLIC_KEY = import.meta.env.PUBLIC_VAPID_KEY || '';
-import { PUBLIC_VAPID_KEY as VAPID_PUBLIC_KEY } from '$env/static/public';
-console.log('🚀 ~ VAPID_PUBLIC_KEY:', VAPID_PUBLIC_KEY);
+const VAPID_PUBLIC_KEY = import.meta.env.PUBLIC_VAPID_KEY || '';
 
 export interface NotificationPayload {
 	title: string;
