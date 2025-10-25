@@ -3,10 +3,10 @@
 	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 	import type { Place, Activity, Group } from '$lib/types';
-	import ClaudeMap from '$lib/components/ClaudeMap.svelte';
+	// import ClaudeMap from '$lib/components/ClaudeMap.svelte';
 
-	import Drawer from '../../../lib/components/Drawer.svelte';
-	let showDrawer = false;
+	// import Drawer from '../../../lib/components/Drawer.svelte';
+	// let showDrawer = false;
 
 	export let data: PageData;
 
@@ -50,70 +50,186 @@
 			.from('places')
 			.select(
 				`
-        *,
-        place_activities(
-          activity:activities(*)
-        ),
-        groups(
-          id,
-          name,
-          group_members(count)
-        )
-      `
+			*,
+			place_activities(
+				activity:activities(*)
+			)
+		`
 			)
 			.eq('created_by', data.session!.user.id)
 			.order('created_at', { ascending: false });
 
 		if (!error && places) {
-			myPlaces = places;
+			// For each place, get the groups count
+			const placesWithGroups = await Promise.all(
+				places.map(async (place) => {
+					const { data: groupPlaces } = await data.supabase
+						.from('group_places')
+						.select(
+							`
+						group_id,
+						groups!inner(
+							id,
+							name,
+							group_members(count)
+						)
+					`
+						)
+						.eq('place_id', place.id);
+
+					return {
+						...place,
+						groups: groupPlaces?.map((gp) => gp.groups) || []
+					};
+				})
+			);
+
+			myPlaces = placesWithGroups;
 		}
 	}
 
 	async function loadInvitedPlaces() {
-		// Get places through groups I'm a member of (but didn't create)
+		// Get groups I'm a member of (but didn't create)
 		const { data: groupMemberships, error } = await data.supabase
 			.from('group_members')
 			.select(
 				`
-        group_id,
-        groups(
-          id,
-          name,
-          place:places(
-            *,
-            place_activities(
-              activity:activities(*)
-            )
-          ),
-          group_members(count)
-        )
-      `
+			group_id,
+			groups!inner(
+				id,
+				name,
+				created_by
 			)
-			.eq('user_id', data.session!.user.id);
+		`
+			)
+			.eq('user_id', data.session!.user.id)
+			.neq('groups.created_by', data.session!.user.id);
 
-		if (!error && groupMemberships) {
-			// Filter out places I created and deduplicate
-			const seenPlaceIds = new Set();
-			invitedPlaces = groupMemberships
-				.filter((m) => {
-					const place = (m.groups as any)?.place;
-					if (!place || place.created_by === data.session!.user.id) return false;
-					if (seenPlaceIds.has(place.id)) return false;
-					seenPlaceIds.add(place.id);
-					return true;
-				})
-				.map((m) => ({
-					...(m.groups as any).place,
+		if (error || !groupMemberships) {
+			console.error('Error loading invited places:', error);
+			return;
+		}
+
+		// Get all unique places from these groups
+		const seenPlaceIds = new Set();
+		const placesPromises = groupMemberships.map(async (membership) => {
+			// Get places for this group
+			const { data: groupPlaces } = await data.supabase
+				.from('group_places')
+				.select(
+					`
+				place_id,
+				places!inner(
+					*,
+					place_activities(
+						activity:activities(*)
+					)
+				)
+			`
+				)
+				.eq('group_id', membership.group_id);
+
+			return (
+				groupPlaces?.map((gp) => ({
+					...gp.places,
 					groups: [
 						{
-							id: (m.groups as any).id,
-							name: (m.groups as any).name,
-							group_members: (m.groups as any).group_members
+							id: membership.groups.id,
+							name: membership.groups.name
 						}
 					]
-				}));
-		}
+				})) || []
+			);
+		});
+
+		const placesArrays = await Promise.all(placesPromises);
+		const allPlaces = placesArrays.flat();
+
+		// Deduplicate places and merge groups
+		const placesMap = new Map();
+		allPlaces.forEach((place) => {
+			if (seenPlaceIds.has(place.id)) {
+				// Add group to existing place
+				const existingPlace = placesMap.get(place.id);
+				existingPlace.groups.push(...place.groups);
+			} else {
+				seenPlaceIds.add(place.id);
+				placesMap.set(place.id, place);
+			}
+		});
+
+		invitedPlaces = Array.from(placesMap.values());
 	}
+
+	// async function loadMyPlaces() {
+	// 	const { data: places, error } = await data.supabase
+	// 		.from('places')
+	// 		.select(
+	// 			`
+	//     *,
+	//     place_activities(
+	//       activity:activities(*)
+	//     ),
+	//     groups(
+	//       id,
+	//       name,
+	//       group_members(count)
+	//     )
+	//   `
+	// 		)
+	// 		.eq('created_by', data.session!.user.id)
+	// 		.order('created_at', { ascending: false });
+
+	// 	if (!error && places) {
+	// 		myPlaces = places;
+	// 	}
+	// }
+
+	// async function loadInvitedPlaces() {
+	// 	// Get places through groups I'm a member of (but didn't create)
+	// 	const { data: groupMemberships, error } = await data.supabase
+	// 		.from('group_members')
+	// 		.select(
+	// 			`
+	//     group_id,
+	//     groups(
+	//       id,
+	//       name,
+	//       place:places(
+	//         *,
+	//         place_activities(
+	//           activity:activities(*)
+	//         )
+	//       ),
+	//       group_members(count)
+	//     )
+	//   `
+	// 		)
+	// 		.eq('user_id', data.session!.user.id);
+
+	// 	if (!error && groupMemberships) {
+	// 		// Filter out places I created and deduplicate
+	// 		const seenPlaceIds = new Set();
+	// 		invitedPlaces = groupMemberships
+	// 			.filter((m) => {
+	// 				const place = (m.groups as any)?.place;
+	// 				if (!place || place.created_by === data.session!.user.id) return false;
+	// 				if (seenPlaceIds.has(place.id)) return false;
+	// 				seenPlaceIds.add(place.id);
+	// 				return true;
+	// 			})
+	// 			.map((m) => ({
+	// 				...(m.groups as any).place,
+	// 				groups: [
+	// 					{
+	// 						id: (m.groups as any).id,
+	// 						name: (m.groups as any).name,
+	// 						group_members: (m.groups as any).group_members
+	// 					}
+	// 				]
+	// 			}));
+	// 	}
+	// }
 
 	async function loadActivities() {
 		const { data: activities, error } = await data.supabase
@@ -368,15 +484,6 @@
 									{/if}
 								</button>
 								<button class="map-btn" on:click={openMapDrawer}> 🗺️ Pick on Map </button>
-
-								<button on:click={() => (showDrawer = true)}>Open Custom Drawer</button> -->
-
-								<Drawer bind:isOpen={showDrawer}>
-									<h2>Custom Drawer Content</h2>
-									<p>This is a custom bottom drawer component.</p>
-									<button on:click={() => (showDrawer = false)}>Close</button>
-									<ClaudeMap bind:this={map} />
-								</Drawer>
 							</div>
 						{:else}
 							<div class="location-success">

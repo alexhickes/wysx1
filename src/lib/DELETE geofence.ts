@@ -1,7 +1,7 @@
-// src/lib/geofencing.ts - Updated to handle multiple places per group
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { browser } from '$app/environment';
 import { queueCheckIn, queueCheckOut } from './offlineQueue';
+import { PUBLIC_SUPABASE_URL } from '$env/static/public';
 
 interface Place {
 	id: string;
@@ -14,18 +14,16 @@ interface Place {
 interface ActiveCheckIn {
 	id: string;
 	place_id: string;
-	group_id: string;
+	group_id?: string;
 }
 
 let watchId: number | null = null;
-let currentCheckIns: Map<string, ActiveCheckIn> = new Map(); // Key: "groupId-placeId"
+let currentCheckIns: Map<string, ActiveCheckIn> = new Map();
 let isProcessing = false;
 
-/**
- * Calculate distance between two coordinates using Haversine formula
- */
-function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-	const R = 6371e3; // Earth's radius in meters
+export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+	// Haversine formula
+	const R = 6371e3; // Earth radius in meters
 	const φ1 = (lat1 * Math.PI) / 180;
 	const φ2 = (lat2 * Math.PI) / 180;
 	const Δφ = ((lat2 - lat1) * Math.PI) / 180;
@@ -39,19 +37,35 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 	return R * c; // Distance in meters
 }
 
+export function checkNearbyFriends(
+	myLocation: { latitude: number; longitude: number },
+	friendLocations: Map<string, any>,
+	radiusMeters: number = 500
+): string[] {
+	const nearby: string[] = [];
+
+	friendLocations.forEach((location, friendId) => {
+		const distance = calculateDistance(
+			myLocation.latitude,
+			myLocation.longitude,
+			location.latitude,
+			location.longitude
+		);
+
+		if (distance <= radiusMeters) {
+			nearby.push(friendId);
+		}
+	});
+
+	return nearby;
+}
+
 /**
  * Check if user is within a place's geofence
  */
 function isWithinGeofence(userLat: number, userLon: number, place: Place): boolean {
 	const distance = calculateDistance(userLat, userLon, place.latitude, place.longitude);
 	return distance <= place.radius;
-}
-
-/**
- * Get unique check-in key
- */
-function getCheckInKey(groupId: string, placeId: string): string {
-	return `${groupId}-${placeId}`;
 }
 
 /**
@@ -65,83 +79,50 @@ async function processCheckIn(
 	longitude: number
 ): Promise<void> {
 	try {
-		// Get groups that include this place
-		const { data: groupPlaces, error: groupPlacesError } = await supabase
-			.from('group_places')
+		// Check if already checked in to this place
+		if (currentCheckIns.has(place.id)) {
+			return;
+		}
+
+		// Get user's groups for this place
+		const { data: groups, error: groupsError } = await supabase
+			.from('group_members')
 			.select(
 				`
         group_id,
         groups!inner(
           id,
+          place_id,
           auto_checkin_enabled,
           notification_enabled
         )
       `
 			)
-			.eq('place_id', place.id);
+			.eq('user_id', userId)
+			.eq('groups.place_id', place.id)
+			.eq('share_location', true);
 
-		if (groupPlacesError) throw groupPlacesError;
+		if (groupsError) throw groupsError;
 
-		if (!groupPlaces || groupPlaces.length === 0) {
+		if (!groups || groups.length === 0) {
 			console.log(`No groups found for place ${place.id}`);
 			return;
 		}
 
-		// For each group, check if user is a member with location sharing enabled
-		for (const groupPlace of groupPlaces) {
-			const groupId = groupPlace.group_id;
-			const checkInKey = getCheckInKey(groupId, place.id);
+		// Filter to auto-checkin enabled groups
+		const autoCheckinGroups = groups.filter((g) => g.groups.auto_checkin_enabled);
 
-			// Skip if already checked in to this group-place combination
-			if (currentCheckIns.has(checkInKey)) {
-				continue;
-			}
+		if (autoCheckinGroups.length === 0) {
+			console.log(`No auto-checkin groups for place ${place.id}`);
+			return;
+		}
 
-			// Check if user is a member with sharing enabled
-			const { data: membership, error: memberError } = await supabase
-				.from('group_members')
-				.select('user_id, share_location')
-				.eq('group_id', groupId)
-				.eq('user_id', userId)
-				.eq('share_location', true)
-				.single();
-
-			if (memberError || !membership) {
-				console.log(`User not a member of group ${groupId} or not sharing location`);
-				continue;
-			}
-
-			// Since groups is not an array in the type definition, access it directly
-			if (!groupPlace.groups || !groupPlace.groups.auto_checkin_enabled) {
-				console.log(`Auto check-in disabled for group ${groupId}`);
-				continue;
-			}
-
-			// Check if auto-checkin is enabled for this group
-			// if (!groupPlace.groups.find((g) => !g.auto_checkin_enabled)) {
-			// 	//.auto_checkin_enabled) {
-			// 	console.log(`Auto check-in disabled for group ${groupId}`);
-			// 	continue;
-			// }
-
-			// // Check if auto-checkin is enabled for this group
-			// groupPlace.groups.forEach(async (groupAtPlace) => {
-			// 	if (!groupAtPlace.auto_checkin_enabled) {
-			// 		console.log(`Auto check-in disabled for group ${groupId}`);
-			// 		continue;
-			// 	}
-			// });
-
-			// if (!groupPlace.groups.auto_checkin_enabled) {
-			// 	console.log(`Auto check-in disabled for group ${groupId}`);
-			// 	continue;
-			// }
-
-			// Create check-in
+		// Create check-ins for each group
+		for (const group of autoCheckinGroups) {
 			const checkInData = {
 				user_id: userId,
 				place_id: place.id,
-				group_id: groupId,
+				group_id: group.group_id,
 				check_in_type: 'auto',
 				latitude,
 				longitude
@@ -157,26 +138,19 @@ async function processCheckIn(
 
 				if (checkInError) throw checkInError;
 
-				// Store active check-in with unique key
-				currentCheckIns.set(checkInKey, {
+				// Store active check-in
+				currentCheckIns.set(place.id, {
 					id: checkIn.id,
 					place_id: place.id,
-					group_id: groupId
+					group_id: group.group_id
 				});
 
-				// // Trigger notification edge function if notifications are enabled
-				// groupPlace.groups.forEach(async (groupAtPlace) => {
-				// 	if (groupAtPlace.notification_enabled) {
-				// 		await triggerCheckInNotification(supabase, checkIn.id, userId, place, groupId);
-				// 	}
-				// });
-
 				// Trigger notification edge function if notifications are enabled
-				if (groupPlace.groups.notification_enabled) {
-					await triggerCheckInNotification(supabase, checkIn.id, userId, place, groupId);
+				if (group.groups.notification_enabled) {
+					await triggerCheckInNotification(supabase, checkIn.id, userId, place, group.group_id);
 				}
 
-				console.log(`✓ Checked in to ${place.name} for group ${groupId}`);
+				console.log(`Checked in to ${place.name} (group: ${group.group_id})`);
 			} else {
 				// Offline - queue for later
 				const session = await supabase.auth.getSession();
@@ -184,7 +158,7 @@ async function processCheckIn(
 
 				if (accessToken) {
 					await queueCheckIn(supabase.supabaseUrl, accessToken, checkInData);
-					console.log(`📝 Queued check-in to ${place.name} for group ${groupId}`);
+					console.log(`Queued check-in to ${place.name} for later`);
 				}
 			}
 		}
@@ -196,15 +170,9 @@ async function processCheckIn(
 /**
  * Process automatic check-out
  */
-async function processCheckOut(
-	supabase: SupabaseClient,
-	groupId: string,
-	placeId: string
-): Promise<void> {
+async function processCheckOut(supabase: SupabaseClient, placeId: string): Promise<void> {
 	try {
-		const checkInKey = getCheckInKey(groupId, placeId);
-		const checkIn = currentCheckIns.get(checkInKey);
-
+		const checkIn = currentCheckIns.get(placeId);
 		if (!checkIn) return;
 
 		if (navigator.onLine) {
@@ -216,20 +184,20 @@ async function processCheckOut(
 
 			if (error) throw error;
 
-			console.log(`✓ Checked out from place ${placeId} for group ${groupId}`);
+			console.log(`Checked out from place ${placeId}`);
 		} else {
 			// Offline - queue for later
 			const session = await supabase.auth.getSession();
 			const accessToken = session.data.session?.access_token;
 
 			if (accessToken) {
-				await queueCheckOut(supabase.supabaseUrl, accessToken, checkIn.id);
-				console.log(`📝 Queued check-out from place ${placeId} for group ${groupId}`);
+				await queueCheckOut(PUBLIC_SUPABASE_URL, accessToken, checkIn.id);
+				console.log(`Queued check-out from place ${placeId} for later`);
 			}
 		}
 
 		// Remove from active check-ins
-		currentCheckIns.delete(checkInKey);
+		currentCheckIns.delete(placeId);
 	} catch (error) {
 		console.error('Error processing check-out:', error);
 	}
@@ -255,7 +223,7 @@ async function triggerCheckInNotification(
 
 		if (!profile) return;
 
-		// Call edge function with updated function that includes place_id
+		// Call edge function
 		const { error } = await supabase.functions.invoke('send-checkin-notification', {
 			body: {
 				check_in_id: checkInId,
@@ -316,28 +284,18 @@ async function handlePositionUpdate(
 		// Check which places user is within
 		const placesWithin = places.filter((place) => isWithinGeofence(latitude, longitude, place));
 
-		// Get all current place IDs
-		const currentPlaceIds = new Set(placesWithin.map((p) => p.id));
-
-		// Check-in to new places (this will handle multiple groups per place)
+		// Check-in to new places
 		for (const place of placesWithin) {
-			await processCheckIn(supabase, userId, place, latitude, longitude);
-		}
-
-		// Check-out from places no longer within
-		// We need to check each group-place combination
-		const checkInsToRemove: string[] = [];
-
-		for (const [checkInKey, checkIn] of currentCheckIns) {
-			if (!currentPlaceIds.has(checkIn.place_id)) {
-				checkInsToRemove.push(checkInKey);
+			if (!currentCheckIns.has(place.id)) {
+				await processCheckIn(supabase, userId, place, latitude, longitude);
 			}
 		}
 
-		for (const checkInKey of checkInsToRemove) {
-			const checkIn = currentCheckIns.get(checkInKey);
-			if (checkIn) {
-				await processCheckOut(supabase, checkIn.group_id, checkIn.place_id);
+		// Check-out from places no longer within
+		const currentPlaceIds = new Set(placesWithin.map((p) => p.id));
+		for (const [placeId] of currentCheckIns) {
+			if (!currentPlaceIds.has(placeId)) {
+				await processCheckOut(supabase, placeId);
 			}
 		}
 	} catch (error) {
@@ -371,7 +329,7 @@ export function startGeofencing(supabase: SupabaseClient, userId: string): void 
 		}
 	);
 
-	console.log('✓ Geofencing started');
+	console.log('Geofencing started');
 }
 
 /**
@@ -383,7 +341,7 @@ export function stopGeofencing(): void {
 	if (watchId !== null) {
 		navigator.geolocation.clearWatch(watchId);
 		watchId = null;
-		console.log('✓ Geofencing stopped');
+		console.log('Geofencing stopped');
 	}
 }
 
@@ -410,14 +368,13 @@ export async function loadActiveCheckIns(supabase: SupabaseClient, userId: strin
 		if (data) {
 			currentCheckIns.clear();
 			data.forEach((checkIn) => {
-				const key = getCheckInKey(checkIn.group_id, checkIn.place_id);
-				currentCheckIns.set(key, {
+				currentCheckIns.set(checkIn.place_id, {
 					id: checkIn.id,
 					place_id: checkIn.place_id,
 					group_id: checkIn.group_id
 				});
 			});
-			console.log(`✓ Loaded ${data.length} active check-in(s)`);
+			console.log(`Loaded ${data.length} active check-in(s)`);
 		}
 	} catch (error) {
 		console.error('Error loading active check-ins:', error);

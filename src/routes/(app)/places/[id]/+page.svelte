@@ -1,3 +1,4 @@
+<!-- src/route/(app)/places/[id]/+page.svelte -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -32,6 +33,21 @@
 		selectedActivities: [] as string[],
 		latitude: 0,
 		longitude: 0
+	};
+
+	// Create Group Modal
+	let showCreateGroup = false;
+	let createGroupLoading = false;
+	let createGroupError = '';
+
+	// Create group form
+	let newGroup = {
+		name: '',
+		description: '',
+		is_public: true,
+		requires_approval: false,
+		auto_checkin_enabled: true,
+		notification_enabled: true
 	};
 
 	// Map
@@ -307,9 +323,91 @@
 	}
 
 	function handleCreateGroup() {
-		// Navigate to a create group page or show modal
-		// For now, just go back to places page
-		goto('/places');
+		showCreateGroup = true;
+		createGroupError = '';
+	}
+
+	function cancelCreateGroup() {
+		showCreateGroup = false;
+		createGroupError = '';
+		// Reset form
+		newGroup = {
+			name: '',
+			description: '',
+			is_public: true,
+			requires_approval: false,
+			auto_checkin_enabled: true,
+			notification_enabled: true
+		};
+	}
+
+	async function submitCreateGroup() {
+		if (!newGroup.name.trim()) {
+			createGroupError = 'Please enter a group name';
+			return;
+		}
+
+		if (!place?.id) {
+			createGroupError = 'Invalid place';
+			return;
+		}
+
+		createGroupLoading = true;
+		createGroupError = '';
+
+		try {
+			// Create the group
+			const { data: groupData, error: groupError } = await createGroup(data.supabase, {
+				name: newGroup.name,
+				initial_place_id: place.id, // ← New way
+				description: newGroup.description,
+				is_public: newGroup.is_public,
+				requires_approval: newGroup.requires_approval,
+				auto_checkin_enabled: newGroup.auto_checkin_enabled,
+				notification_enabled: newGroup.notification_enabled
+			});
+			// OLD Create the group
+			// const { data: groupData, error: groupError } = await data.supabase
+			// 	.from('groups')
+			// 	.insert({
+			// 		place_id: place.id,
+			// 		name: newGroup.name.trim(),
+			// 		description: newGroup.description.trim() || null,
+			// 		is_public: newGroup.is_public,
+			// 		requires_approval: newGroup.requires_approval,
+			// 		auto_checkin_enabled: newGroup.auto_checkin_enabled,
+			// 		notification_enabled: newGroup.notification_enabled,
+			// 		created_by: data.session!.user.id
+			// 	})
+			// 	.select()
+			// 	.single();
+
+			if (groupError) throw groupError;
+
+			// Add creator as admin member
+			const { error: memberError } = await data.supabase.from('group_members').insert({
+				group_id: groupData.id,
+				user_id: data.session!.user.id,
+				role: 'admin',
+				share_location: true,
+				receive_notifications: true
+			});
+
+			if (memberError) throw memberError;
+
+			// Reset form and close
+			cancelCreateGroup();
+
+			// Reload groups
+			await loadGroups();
+
+			// Navigate to the new group
+			goto(`/groups/${groupData.id}`);
+		} catch (error: any) {
+			createGroupError = error.message || 'Failed to create group';
+		} finally {
+			createGroupLoading = false;
+		}
 	}
 
 	function getGroupMemberCount(group: any): number {
@@ -535,6 +633,97 @@
 						<button class="create-group-btn" on:click={handleCreateGroup}> + Create Group </button>
 					</div>
 
+					<!-- Create Group Form -->
+					{#if showCreateGroup}
+						<div class="create-group-form">
+							<h3>Create New Group</h3>
+
+							{#if createGroupError}
+								<div class="error-message">{createGroupError}</div>
+							{/if}
+
+							<div class="form-group">
+								<label for="group-name">Group Name *</label>
+								<input
+									id="group-name"
+									type="text"
+									placeholder="e.g., Morning Skate Crew"
+									bind:value={newGroup.name}
+									maxlength="100"
+								/>
+							</div>
+
+							<div class="form-group">
+								<label for="group-description">Description</label>
+								<textarea
+									id="group-description"
+									placeholder="Tell people what this group is about..."
+									bind:value={newGroup.description}
+									rows="3"
+									maxlength="500"
+								></textarea>
+							</div>
+
+							<div class="form-group">
+								<label class="checkbox-label">
+									<input type="checkbox" bind:checked={newGroup.is_public} />
+									<span class="checkbox-text">
+										<strong>Public Group</strong>
+										<span class="help-text">Anyone can see and join this group</span>
+									</span>
+								</label>
+							</div>
+
+							{#if !newGroup.is_public}
+								<div class="form-group">
+									<label class="checkbox-label">
+										<input type="checkbox" bind:checked={newGroup.requires_approval} />
+										<span class="checkbox-text">
+											<strong>Require Approval</strong>
+											<span class="help-text">Members need approval before joining</span>
+										</span>
+									</label>
+								</div>
+							{/if}
+
+							<div class="form-group">
+								<label class="checkbox-label">
+									<input type="checkbox" bind:checked={newGroup.auto_checkin_enabled} />
+									<span class="checkbox-text">
+										<strong>Auto Check-in</strong>
+										<span class="help-text">Automatically check in members when they arrive</span>
+									</span>
+								</label>
+							</div>
+
+							<div class="form-group">
+								<label class="checkbox-label">
+									<input type="checkbox" bind:checked={newGroup.notification_enabled} />
+									<span class="checkbox-text">
+										<strong>Notifications</strong>
+										<span class="help-text">Send notifications when members check in</span>
+									</span>
+								</label>
+							</div>
+
+							<div class="form-actions">
+								<button class="cancel-btn" on:click={cancelCreateGroup}> Cancel </button>
+								<button
+									class="submit-btn"
+									on:click={submitCreateGroup}
+									disabled={createGroupLoading || !newGroup.name.trim()}
+								>
+									{#if createGroupLoading}
+										<span class="spinner-small"></span>
+										Creating...
+									{:else}
+										Create Group
+									{/if}
+								</button>
+							</div>
+						</div>
+					{/if}
+
 					{#if groups.length === 0}
 						<div class="empty-state">
 							<span class="empty-icon">📦</span>
@@ -563,6 +752,12 @@
 												<span class="group-badge">Public</span>
 											{:else}
 												<span class="group-badge private">Private</span>
+											{/if}
+											{#if group.auto_checkin_enabled}
+												<span class="feature-badge">📍 Auto</span>
+											{/if}
+											{#if group.notification_enabled}
+												<span class="feature-badge">🔔 Notify</span>
 											{/if}
 										</div>
 									</div>
@@ -1069,6 +1264,122 @@
 	.save-btn:hover {
 		transform: translateY(-2px);
 		box-shadow: 0 8px 20px rgba(252, 76, 2, 0.4);
+	}
+
+	.create-group-form {
+		background: #0a0a0a;
+		border: 1px solid #1a1a1a;
+		border-radius: 12px;
+		padding: 20px;
+		margin-bottom: 20px;
+		animation: slideDown 0.3s ease-out;
+	}
+
+	@keyframes slideDown {
+		from {
+			opacity: 0;
+			transform: translateY(-10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	.create-group-form h3 {
+		margin: 0 0 20px 0;
+		font-size: 18px;
+		color: #fff;
+		font-weight: 700;
+	}
+
+	.checkbox-label {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		cursor: pointer;
+		padding: 12px;
+		background: #000;
+		border: 1px solid #333;
+		border-radius: 8px;
+		transition: all 0.2s;
+	}
+
+	.checkbox-label:hover {
+		border-color: var(--color-primary);
+		background: rgba(252, 76, 2, 0.02);
+	}
+
+	.checkbox-label input[type='checkbox'] {
+		margin-top: 2px;
+		width: 18px;
+		height: 18px;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.checkbox-text {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		flex: 1;
+	}
+
+	.checkbox-text strong {
+		font-size: 15px;
+		color: #fff;
+		font-weight: 600;
+	}
+
+	.help-text {
+		font-size: 13px;
+		color: #666;
+		line-height: 1.4;
+	}
+
+	.spinner-small {
+		width: 16px;
+		height: 16px;
+		border: 2px solid #333;
+		border-top-color: #fff;
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		display: inline-block;
+	}
+
+	/* Feature badges */
+	.feature-badge {
+		padding: 3px 8px;
+		border-radius: 6px;
+		font-size: 11px;
+		font-weight: 600;
+		background: rgba(252, 76, 2, 0.1);
+		color: var(--color-primary);
+		border: 1px solid rgba(252, 76, 2, 0.2);
+	}
+
+	/* Update existing .group-meta if needed */
+	.group-meta {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+
+	/* Enhanced group hover (update existing if present) */
+	.group-item {
+		background: #0a0a0a;
+		padding: 16px;
+		border-radius: 12px;
+		border: 1px solid #1a1a1a;
+		transition: all 0.2s;
+		cursor: pointer;
+	}
+
+	.group-item:hover {
+		border-color: var(--color-primary);
+		transform: translateY(-2px);
+		box-shadow: 0 4px 12px rgba(252, 76, 2, 0.15);
 	}
 
 	/* Danger Zone */

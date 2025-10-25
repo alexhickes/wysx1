@@ -1,12 +1,15 @@
+<!-- src/routes/(app)/+layout.svelte -->
 <script lang="ts">
 	import '../../app.css';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import type { LayoutData } from './$types';
+	import InvitationBadge from '$lib/components/InvitationBadge.svelte';
 
 	export let data: LayoutData;
 
 	$: profile = data.profile;
+	console.log('LayoutData > data.profile:', data.profile);
 	$: currentPath = $page.url.pathname;
 
 	const navItems = [
@@ -31,9 +34,9 @@
 					Home
 				{:else if currentPath === '/map'}
 					Map
-					<!-- {:else if currentPath === '/friends'}
+				{:else if currentPath === '/friends'}
 					Friends
-				{:else if currentPath === '/places'} -->
+				{:else if currentPath === '/places'}
 					Places
 				{:else}
 					Location Share
@@ -41,7 +44,10 @@
 			</h1>
 
 			<div class="header-actions">
-				<button class="icon-btn" on:click={() => goto('/profile')} aria-label="Profile">
+				<nav>
+					<InvitationBadge supabase={data.supabase} />
+				</nav>
+				<button class="icon-btn" on:click={() => goto('/settings/profile')} aria-label="Profile">
 					<div class="avatar">
 						{profile?.display_name?.charAt(0)?.toUpperCase() ||
 							profile?.username?.charAt(0)?.toUpperCase() ||

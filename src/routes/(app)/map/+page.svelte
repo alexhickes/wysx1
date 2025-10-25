@@ -38,12 +38,14 @@
 	let showCreateGroup = false;
 	let drawerExpanded = false;
 
-	// Forms
+	// Create group form
 	let newGroup = {
 		name: '',
 		description: '',
 		is_public: true,
-		auto_checkin_enabled: true
+		requires_approval: false,
+		auto_checkin_enabled: true,
+		notification_enabled: true
 	};
 
 	onMount(async () => {
@@ -176,6 +178,7 @@
 	async function loadMyGroups() {
 		const { data: groups } = await getMyGroups(data.supabase);
 		myGroups = groups || [];
+		console.log('My groups:', myGroups);
 	}
 
 	async function loadMyActiveCheckIns() {
@@ -229,25 +232,39 @@
 	async function handleCreateGroup() {
 		if (!selectedPlace || !newGroup.name) return;
 
-		const { error } = await createGroup(data.supabase, {
-			place_id: selectedPlace.id,
+		// Create the group
+		const { data: groupData, error: groupError } = await createGroup(data.supabase, {
 			name: newGroup.name,
+			initial_place_id: selectedPlace.id, // ← New way
 			description: newGroup.description,
 			is_public: newGroup.is_public,
-			auto_checkin_enabled: newGroup.auto_checkin_enabled
+			requires_approval: newGroup.requires_approval,
+			auto_checkin_enabled: newGroup.auto_checkin_enabled,
+			notification_enabled: newGroup.notification_enabled
 		});
 
-		if (error) {
-			alert('Error creating group: ' + error);
+		// const { error } = await createGroup(data.supabase, {
+		// 	initial_place_id: selectedPlace.id,
+		// 	name: newGroup.name,
+		// 	description: newGroup.description,
+		// 	is_public: newGroup.is_public,
+		// 	auto_checkin_enabled: newGroup.auto_checkin_enabled
+		// });
+
+		if (groupError) {
+			alert('Error creating group: ' + groupError);
 			return;
 		}
 
 		showCreateGroup = false;
+		// Reset form to original values
 		newGroup = {
 			name: '',
 			description: '',
 			is_public: true,
-			auto_checkin_enabled: true
+			requires_approval: false,
+			auto_checkin_enabled: true,
+			notification_enabled: true
 		};
 
 		await loadMyGroups();
@@ -375,8 +392,8 @@
 						{#each myGroups as membership}
 							<div class="group-card">
 								<div class="group-info">
-									<strong>{membership.group.name}</strong>
-									<span class="place-name">📍 {membership.group.place.name}</span>
+									<strong>{membership.name}</strong>
+									<!-- <span class="place-name">📍 {membership.group.place.name}</span> -->
 								</div>
 								<span class:active={membership.share_location} class="setting-indicator">
 									{membership.share_location ? '🟢' : '⚫'} Sharing

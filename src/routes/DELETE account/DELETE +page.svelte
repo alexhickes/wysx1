@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
-	import Avatar from './Avatar.svelte';
+	import Avatar from '../(app)/settings/profile/Avatar.svelte';
 
 	let { data, form } = $props();
 	let { session, supabase, profile } = $derived(data);
 	let profileForm: HTMLFormElement;
 	let loading = $state(false);
-	let fullName: string = $derived(profile?.full_name ?? '');
+	let fullName: string = $derived(profile?.display_name ?? '');
 	let username: string = $derived(profile?.username ?? '');
 	let website: string = $derived(profile?.website ?? '');
 	let avatarUrl: string = $derived(profile?.avatar_url ?? '');
