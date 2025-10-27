@@ -169,6 +169,8 @@ export async function createGroup(
 		return { data: null, error: { message: 'Not authenticated' } };
 	}
 
+	console.log('Creating group with data:', groupData);
+
 	// Create the group (without place_id)
 	const { data: group, error: groupError } = await supabase
 		.from('groups')

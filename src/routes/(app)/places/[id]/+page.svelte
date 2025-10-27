@@ -341,6 +341,75 @@
 		};
 	}
 
+	// async function submitCreateGroup() {
+	// 	if (!newGroup.name.trim()) {
+	// 		createGroupError = 'Please enter a group name';
+	// 		return;
+	// 	}
+
+	// 	if (!place?.id) {
+	// 		createGroupError = 'Invalid place';
+	// 		return;
+	// 	}
+
+	// 	createGroupLoading = true;
+	// 	createGroupError = '';
+
+	// 	try {
+	// 		// Create the group
+	// 		const { data: groupData, error: groupError } = await createGroup(data.supabase, {
+	// 			name: newGroup.name,
+	// 			initial_place_id: place.id, // ← New way
+	// 			description: newGroup.description,
+	// 			is_public: newGroup.is_public,
+	// 			requires_approval: newGroup.requires_approval,
+	// 			auto_checkin_enabled: newGroup.auto_checkin_enabled,
+	// 			notification_enabled: newGroup.notification_enabled
+	// 		});
+	// 		// OLD Create the group
+	// 		// const { data: groupData, error: groupError } = await data.supabase
+	// 		// 	.from('groups')
+	// 		// 	.insert({
+	// 		// 		place_id: place.id,
+	// 		// 		name: newGroup.name.trim(),
+	// 		// 		description: newGroup.description.trim() || null,
+	// 		// 		is_public: newGroup.is_public,
+	// 		// 		requires_approval: newGroup.requires_approval,
+	// 		// 		auto_checkin_enabled: newGroup.auto_checkin_enabled,
+	// 		// 		notification_enabled: newGroup.notification_enabled,
+	// 		// 		created_by: data.session!.user.id
+	// 		// 	})
+	// 		// 	.select()
+	// 		// 	.single();
+
+	// 		if (groupError) throw groupError;
+
+	// 		// Add creator as admin member
+	// 		const { error: memberError } = await data.supabase.from('group_members').insert({
+	// 			group_id: groupData.id,
+	// 			user_id: data.session!.user.id,
+	// 			role: 'admin',
+	// 			share_location: true,
+	// 			receive_notifications: true
+	// 		});
+
+	// 		if (memberError) throw memberError;
+
+	// 		// Reset form and close
+	// 		cancelCreateGroup();
+
+	// 		// Reload groups
+	// 		await loadGroups();
+
+	// 		// Navigate to the new group
+	// 		goto(`/groups/${groupData.id}`);
+	// 	} catch (error: any) {
+	// 		createGroupError = error.message || 'Failed to create group';
+	// 	} finally {
+	// 		createGroupLoading = false;
+	// 	}
+	// }
+
 	async function submitCreateGroup() {
 		if (!newGroup.name.trim()) {
 			createGroupError = 'Please enter a group name';
@@ -356,35 +425,25 @@
 		createGroupError = '';
 
 		try {
-			// Create the group
-			const { data: groupData, error: groupError } = await createGroup(data.supabase, {
-				name: newGroup.name,
-				initial_place_id: place.id, // ← New way
-				description: newGroup.description,
-				is_public: newGroup.is_public,
-				requires_approval: newGroup.requires_approval,
-				auto_checkin_enabled: newGroup.auto_checkin_enabled,
-				notification_enabled: newGroup.notification_enabled
-			});
-			// OLD Create the group
-			// const { data: groupData, error: groupError } = await data.supabase
-			// 	.from('groups')
-			// 	.insert({
-			// 		place_id: place.id,
-			// 		name: newGroup.name.trim(),
-			// 		description: newGroup.description.trim() || null,
-			// 		is_public: newGroup.is_public,
-			// 		requires_approval: newGroup.requires_approval,
-			// 		auto_checkin_enabled: newGroup.auto_checkin_enabled,
-			// 		notification_enabled: newGroup.notification_enabled,
-			// 		created_by: data.session!.user.id
-			// 	})
-			// 	.select()
-			// 	.single();
+			// 1. Create the group
+			const { data: groupData, error: groupError } = await data.supabase
+				.from('groups')
+				.insert({
+					name: newGroup.name.trim(),
+					description: newGroup.description.trim() || null,
+					place_id: place.id,
+					is_public: newGroup.is_public,
+					requires_approval: newGroup.requires_approval,
+					auto_checkin_enabled: newGroup.auto_checkin_enabled,
+					notification_enabled: newGroup.notification_enabled,
+					created_by: data.session!.user.id
+				})
+				.select()
+				.single();
 
 			if (groupError) throw groupError;
 
-			// Add creator as admin member
+			// 2. Add creator as admin member FIRST
 			const { error: memberError } = await data.supabase.from('group_members').insert({
 				group_id: groupData.id,
 				user_id: data.session!.user.id,
@@ -395,13 +454,22 @@
 
 			if (memberError) throw memberError;
 
-			// Reset form and close
+			// 3. NOW add place to group_places
+			const { error: groupPlaceError } = await data.supabase.from('group_places').insert({
+				group_id: groupData.id,
+				place_id: place.id,
+				added_by: data.session!.user.id,
+				is_primary: true,
+				display_order: 0
+			});
+
+			if (groupPlaceError) {
+				console.error('Error adding to group_places:', groupPlaceError);
+				// Group and membership created, so don't fail completely
+			}
+
 			cancelCreateGroup();
-
-			// Reload groups
 			await loadGroups();
-
-			// Navigate to the new group
 			goto(`/groups/${groupData.id}`);
 		} catch (error: any) {
 			createGroupError = error.message || 'Failed to create group';
