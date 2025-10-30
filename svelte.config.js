@@ -7,7 +7,10 @@ const config = {
 
 	kit: {
 		adapter: adapter({
-			runtime: 'nodejs22.x'
+			runtime: 'nodejs22.x',
+			images: {
+				domains: ['wysx1.vercel.app']
+			}
 		})
 	}
 };
