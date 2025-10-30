@@ -9,6 +9,7 @@ const config = {
 		adapter: adapter({
 			runtime: 'nodejs22.x',
 			images: {
+				sizes: [640, 828, 1200, 1920, 3840],
 				domains: ['wysx1.vercel.app']
 			}
 		})
