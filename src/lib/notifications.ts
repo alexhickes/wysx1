@@ -112,7 +112,7 @@ export async function subscribeToPushNotifications(
 			console.error(
 				'VAPID key is invalid or malformed. Please check your PUBLIC_VAPID_KEY environment variable.'
 			);
-			console.error('Current key length:', VAPID_PUBLIC_KEY?.length || 0);
+			console.error('Current key length:', PUBLIC_VAPID_KEY?.length || 0);
 			console.error('Expected: 88 characters (base64url encoded)');
 		}
 
