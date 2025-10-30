@@ -138,7 +138,7 @@
 		<div class="invitations-list">
 			{#each displayedInvitations as invitation}
 				{@const group = invitation.groups}
-				{@const place = group?.place}
+				{@const place = group?.placeinvitation.groups.group_places.find((gp) => gp.is_primary)}
 				{@const inviter = invitation.inviter}
 				<div class="invitation-item">
 					<div class="invitation-content">
@@ -148,7 +148,8 @@
 							</div>
 							<div class="invitation-info">
 								<div class="group-name">{group?.name || 'Unknown Group'}</div>
-								<div class="place-name">at {place?.name || 'Unknown Place'}</div>
+								<div class="place-name">(group_members.size) group members</div>
+								<!-- <div class="place-name">at {place?.name || 'Unknown Place'}</div> -->
 							</div>
 						</div>
 

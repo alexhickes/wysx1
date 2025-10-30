@@ -24,6 +24,7 @@
 
 	async function loadCount() {
 		const { data, error } = await getMyPendingInvitations(supabase);
+		console.log('Pending invitations data:', data, 'error:', error);
 		if (!error && data) {
 			count = data.length;
 		}

@@ -1,10 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { browser } from '$app/environment';
+import { PUBLIC_VAPID_KEY } from '$env/static/public';
 
 // VAPID public key - you'll need to generate this
 // Use: npx web-push generate-vapid-keys
 // Then add to your .env file as PUBLIC_VAPID_KEY
-const VAPID_PUBLIC_KEY = import.meta.env.PUBLIC_VAPID_KEY || '';
+// const VAPID_PUBLIC_KEY = import.meta.env.PUBLIC_VAPID_KEY || '';
+// console.log('🚀 ~ VAPID_PUBLIC_KEY:', VAPID_PUBLIC_KEY);
 
 export interface NotificationPayload {
 	title: string;
@@ -69,7 +71,7 @@ export async function subscribeToPushNotifications(
 		}
 
 		// Check if VAPID key is configured
-		if (!VAPID_PUBLIC_KEY || VAPID_PUBLIC_KEY.trim() === '') {
+		if (!PUBLIC_VAPID_KEY || PUBLIC_VAPID_KEY.trim() === '') {
 			console.warn('VAPID public key not configured. Push notifications disabled.');
 			console.warn('Generate keys with: npx web-push generate-vapid-keys');
 			console.warn('Then add PUBLIC_VAPID_KEY to your .env file');
@@ -89,7 +91,7 @@ export async function subscribeToPushNotifications(
 			// Subscribe to push notifications
 			subscription = await registration.pushManager.subscribe({
 				userVisibleOnly: true,
-				applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+				applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY)
 			});
 
 			console.log('Push subscription created:', subscription.endpoint);

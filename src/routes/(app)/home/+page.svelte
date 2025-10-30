@@ -1,43 +1,99 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 	import type { CheckIn, MyActiveCheckIn } from '$lib/types';
 
 	export let data: PageData;
 
 	let activeCheckIns: MyActiveCheckIn[] = [];
+	let friendsCheckIns: any[] = [];
 	let recentActivity: any[] = [];
 	let loading = true;
-	let currentWeek = getCurrentWeek();
 
 	onMount(async () => {
-		await Promise.all([loadActiveCheckIns(), loadRecentActivity()]);
+		await Promise.all([loadActiveCheckIns(), loadFriendsCheckIns(), loadRecentActivity()]);
 		loading = false;
 	});
-
-	function getCurrentWeek() {
-		const now = new Date();
-		const monday = new Date(now);
-		monday.setDate(now.getDate() - now.getDay() + 1);
-
-		const days = [];
-		for (let i = 0; i < 7; i++) {
-			const day = new Date(monday);
-			day.setDate(monday.getDate() + i);
-			days.push({
-				date: day,
-				label: ['M', 'T', 'W', 'T', 'F', 'S', 'S'][i],
-				dayNum: day.getDate(),
-				hasActivity: false // We'll update this with real data
-			});
-		}
-		return days;
-	}
 
 	async function loadActiveCheckIns() {
 		const { data: checkIns } = await data.supabase.from('my_active_checkins').select('*');
 
+		console.log('My Active Check-Ins:', checkIns);
 		activeCheckIns = checkIns || [];
+	}
+
+	async function loadFriendsCheckIns() {
+		console.log('=== LOADING FRIENDS CHECK-INS ===');
+
+		// Get all active check-ins from group members
+		// This query respects RLS and visibility settings
+		const { data: checkIns, error } = await data.supabase
+			.from('check_ins')
+			.select(
+				`
+				id,
+				user_id,
+				place_id,
+				group_id,
+				checked_in_at,
+				activity_id,
+				places(
+					id,
+					name,
+					place_type,
+					latitude,
+					longitude
+				),
+				profiles(
+					id,
+					username,
+					display_name
+				),
+				groups(
+					id,
+					name
+				),
+				activities(
+					id,
+					name,
+					icon
+				)
+			`
+			)
+			.is('checked_out_at', null)
+			.neq('user_id', data.session?.user.id); // Exclude my own check-ins
+
+		if (error) {
+			console.error('Error loading friends check-ins:', error);
+			friendsCheckIns = [];
+			return;
+		}
+
+		console.log('Raw friends check-ins:', checkIns);
+
+		// Group by place to show multiple people at same location
+		const placeGroups = new Map();
+
+		checkIns?.forEach((checkIn) => {
+			if (!checkIn.places) return;
+
+			const placeId = checkIn.place_id;
+			if (!placeGroups.has(placeId)) {
+				placeGroups.set(placeId, {
+					place: checkIn.places,
+					checkIns: []
+				});
+			}
+			placeGroups.get(placeId).checkIns.push(checkIn);
+		});
+
+		// Convert to array and sort by number of people (most popular first)
+		friendsCheckIns = Array.from(placeGroups.values()).sort(
+			(a, b) => b.checkIns.length - a.checkIns.length
+		);
+
+		console.log('Grouped friends check-ins:', friendsCheckIns);
 	}
 
 	async function loadRecentActivity() {
@@ -45,11 +101,11 @@
 			.from('check_ins')
 			.select(
 				`
-        *,
-        place:places(name, latitude, longitude),
-        activity:activities(name, icon),
-        profile:profiles(username, display_name)
-      `
+				*,
+				place:places(name, latitude, longitude),
+				activity:activities(name, icon),
+				profile:profiles(username, display_name)
+			`
 			)
 			.eq('user_id', data.session?.user.id)
 			.not('checked_out_at', 'is', null)
@@ -92,6 +148,39 @@
 		}
 		return `${mins}m`;
 	}
+
+	function formatTimeAgo(dateString: string) {
+		const date = new Date(dateString);
+		const now = new Date();
+		const diffMs = now.getTime() - date.getTime();
+		const diffMins = Math.floor(diffMs / 60000);
+
+		if (diffMins < 1) return 'Just now';
+		if (diffMins < 60) return `${diffMins}m ago`;
+
+		const diffHours = Math.floor(diffMins / 60);
+		if (diffHours < 24) return `${diffHours}h ago`;
+
+		const diffDays = Math.floor(diffHours / 24);
+		return `${diffDays}d ago`;
+	}
+
+	function getPlaceIcon(placeType: string): string {
+		const icons: Record<string, string> = {
+			skatepark: '🛹',
+			gym: '🏋️',
+			climbing: '🧗',
+			cafe: '☕',
+			coworking: '💻',
+			park: '🌳',
+			sports: '⚽'
+		};
+		return icons[placeType] || '📍';
+	}
+
+	function goToPlace(placeId: string) {
+		goto(`/places/${placeId}`);
+	}
 </script>
 
 <svelte:head>
@@ -104,38 +193,7 @@
 			<div class="spinner"></div>
 		</div>
 	{:else}
-		<!-- Activity Streak
-		<section class="streak-section">
-			<div class="streak-header">
-				<h2>Your streak</h2>
-				<a href="/calendar" class="view-calendar">View calendar</a>
-			</div>
-
-			<div class="streak-card">
-				<div class="streak-icon">
-					<span class="fire-icon">🔥</span>
-					<span class="streak-count">3</span>
-					<span class="streak-label">Weeks</span>
-				</div>
-
-				<div class="week-calendar">
-					{#each currentWeek as day}
-						<div class="day-item">
-							<div class="day-label">{day.label}</div>
-							<div class="day-circle" class:has-activity={day.hasActivity}>
-								{#if day.hasActivity}
-									<span class="activity-icon">🛹</span>
-								{:else}
-									<span class="day-number">{day.dayNum}</span>
-								{/if}
-							</div>
-						</div>
-					{/each}
-				</div>
-			</div>
-		</section> -->
-
-		<!-- Active Check-ins -->
+		<!-- My Active Check-ins -->
 		{#if activeCheckIns.length > 0}
 			<section class="active-section">
 				<h2 class="section-title">Currently at</h2>
@@ -160,6 +218,70 @@
 							{#if checkIn.group_name}
 								<span class="group-badge">• {checkIn.group_name}</span>
 							{/if}
+						</div>
+					</div>
+				{/each}
+			</section>
+		{/if}
+
+		<!-- Friends at Locations -->
+		{#if friendsCheckIns.length > 0}
+			<section class="friends-section">
+				<h2 class="section-title">Friends at locations</h2>
+
+				{#each friendsCheckIns as placeGroup}
+					<div
+						class="place-card"
+						role="button"
+						tabindex="0"
+						on:click={() => goToPlace(placeGroup.place.id)}
+						on:keydown={(e) => e.key === 'Enter' && goToPlace(placeGroup.place.id)}
+					>
+						<div class="place-header">
+							<div class="place-icon-badge">
+								{getPlaceIcon(placeGroup.place.place_type)}
+							</div>
+							<div class="place-info">
+								<div class="place-name">{placeGroup.place.name}</div>
+								<div class="people-count">
+									{placeGroup.checkIns.length}
+									{placeGroup.checkIns.length === 1 ? 'person' : 'people'} here
+								</div>
+							</div>
+							<div class="live-indicator">
+								<span class="pulse-dot"></span>
+							</div>
+						</div>
+
+						<div class="people-list">
+							{#each placeGroup.checkIns as checkIn}
+								<div class="person-item">
+									<div class="person-avatar">
+										{checkIn.profiles?.display_name?.charAt(0)?.toUpperCase() ||
+											checkIn.profiles?.username?.charAt(0)?.toUpperCase() ||
+											'?'}
+									</div>
+									<div class="person-details">
+										<span class="person-name">
+											{checkIn.profiles?.display_name || checkIn.profiles?.username}
+										</span>
+										<span class="person-time">
+											{formatTimeAgo(checkIn.checked_in_at)}
+										</span>
+									</div>
+									{#if checkIn.activities}
+										<span class="activity-badge">
+											{checkIn.activities.icon || '🎯'}
+											{checkIn.activities.name}
+										</span>
+									{/if}
+									{#if checkIn.groups}
+										<span class="group-tag">
+											{checkIn.groups.name}
+										</span>
+									{/if}
+								</div>
+							{/each}
 						</div>
 					</div>
 				{/each}
@@ -220,13 +342,6 @@
 								</div>
 							{/if}
 						</div>
-
-						<!-- Mock map preview -->
-						<div class="map-preview">
-							<div class="map-placeholder">
-								<span class="map-icon">🗺️</span>
-							</div>
-						</div>
 					</div>
 				{/each}
 			{/if}
@@ -238,6 +353,7 @@
 	.home-page {
 		min-height: 100%;
 		background: #000;
+		padding-bottom: 80px;
 	}
 
 	.loading {
@@ -263,32 +379,10 @@
 	}
 
 	/* Sections */
-	/* Streak Section */
-	/* .streak-section,
 	.active-section,
+	.friends-section,
 	.activity-section {
 		padding: 20px 16px;
-	}
-
-	.streak-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 16px;
-	}
-
-	.streak-header h2 {
-		font-size: 18px;
-		font-weight: 700;
-		margin: 0;
-		color: #fff;
-	}
-
-	.view-calendar {
-		color: #fc4c02;
-		text-decoration: none;
-		font-size: 14px;
-		font-weight: 600;
 	}
 
 	.section-title {
@@ -297,104 +391,6 @@
 		margin: 0 0 16px 0;
 		color: #fff;
 	}
-	*/
-
-	/* Streak Card */
-	/*.streak-card {
-		background: #0a0a0a;
-		border-radius: 12px;
-		padding: 24px 0;
-		display: flex;
-		align-items: center;
-		gap: 24px;
-		overflow-x: auto;
-		-webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS 
-	}
-
-	/* Hide scrollbar but keep functionality */
-	/*.streak-card::-webkit-scrollbar {
-		display: none;
-	}
-
-	.streak-card {
-		-ms-overflow-style: none; /* IE and Edge */ /*
-		scrollbar-width: none; /* Firefox */ /*
-	}
-	
-	.streak-icon {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 4px;
-		flex-shrink: 0; /* Prevent shrinking */ /*
-		padding-left: 16px;
-	}
-
-	.fire-icon {
-		font-size: 48px;
-	}
-
-	.streak-count {
-		font-size: 32px;
-		font-weight: 700;
-		color: #fc4c02;
-		line-height: 1;
-	}
-
-	.streak-label {
-		font-size: 14px;
-		color: #999;
-		font-weight: 600;
-	}
-
-	.week-calendar {
-		display: flex;
-		gap: 12px;
-		flex-shrink: 0; /* Prevent calendar from shrinking */ /*
-		padding-right: 16px;
-	}
-
-	.day-item {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.day-label {
-		font-size: 12px;
-		color: #999;
-		font-weight: 600;
-	}
-
-	.day-circle {
-		width: 40px;
-		height: 40px;
-		border-radius: 50%;
-		background: #1a1a1a;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 14px;
-		color: #666;
-		font-weight: 600;
-		border: 2px solid #1a1a1a;
-	}
-
-	.day-circle.has-activity {
-		background: #fc4c02;
-		border-color: #fc4c02;
-	}
-
-	.activity-icon {
-		font-size: 20px;
-	}
-
-	.day-number {
-		font-size: 14px;
-		color: #666;
-	}
-	*/
 
 	/* Activity Cards */
 	.activity-card {
@@ -465,6 +461,17 @@
 		border-radius: 12px;
 		font-size: 11px;
 		font-weight: 700;
+		animation: pulse 2s infinite;
+	}
+
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.7;
+		}
 	}
 
 	.activity-type {
@@ -478,6 +485,7 @@
 		gap: 8px;
 		font-size: 12px;
 		color: #666;
+		flex-wrap: wrap;
 	}
 
 	.time-badge,
@@ -485,6 +493,168 @@
 		font-weight: 600;
 	}
 
+	/* Place Cards */
+	.place-card {
+		background: #0a0a0a;
+		border: 1px solid #1a1a1a;
+		border-radius: 12px;
+		padding: 16px;
+		margin-bottom: 12px;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.place-card:hover {
+		border-color: var(--color-primary);
+		transform: translateY(-2px);
+		box-shadow: 0 4px 12px rgba(252, 76, 2, 0.15);
+	}
+
+	.place-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin-bottom: 16px;
+	}
+
+	.place-icon-badge {
+		width: 48px;
+		height: 48px;
+		background: #1a1a1a;
+		border-radius: 12px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 24px;
+		flex-shrink: 0;
+	}
+
+	.place-info {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.place-name {
+		font-size: 16px;
+		font-weight: 700;
+		color: #fff;
+		margin-bottom: 4px;
+	}
+
+	.people-count {
+		font-size: 13px;
+		color: var(--color-primary);
+		font-weight: 600;
+	}
+
+	.live-indicator {
+		flex-shrink: 0;
+	}
+
+	.pulse-dot {
+		display: block;
+		width: 12px;
+		height: 12px;
+		background: var(--color-primary);
+		border-radius: 50%;
+		animation: pulse-ring 2s infinite;
+		position: relative;
+	}
+
+	.pulse-dot::before {
+		content: '';
+		position: absolute;
+		width: 100%;
+		height: 100%;
+		background: var(--color-primary);
+		border-radius: 50%;
+		animation: pulse-ring 2s infinite;
+	}
+
+	@keyframes pulse-ring {
+		0% {
+			transform: scale(1);
+			opacity: 1;
+		}
+		50% {
+			transform: scale(1.5);
+			opacity: 0.5;
+		}
+		100% {
+			transform: scale(1);
+			opacity: 1;
+		}
+	}
+
+	.people-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.person-item {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px;
+		background: #000;
+		border-radius: 8px;
+	}
+
+	.person-avatar {
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 700;
+		color: #fff;
+		font-size: 14px;
+		flex-shrink: 0;
+	}
+
+	.person-details {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.person-name {
+		font-size: 14px;
+		font-weight: 600;
+		color: #fff;
+	}
+
+	.person-time {
+		font-size: 12px;
+		color: #666;
+	}
+
+	.activity-badge {
+		font-size: 11px;
+		padding: 4px 8px;
+		background: rgba(252, 76, 2, 0.1);
+		color: var(--color-primary);
+		border-radius: 6px;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.group-tag {
+		font-size: 11px;
+		padding: 4px 8px;
+		background: #1a1a1a;
+		color: #999;
+		border-radius: 6px;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	/* Activity Stats */
 	.activity-title {
 		font-size: 18px;
 		font-weight: 700;
@@ -517,24 +687,6 @@
 		font-weight: 600;
 	}
 
-	.map-preview {
-		margin-top: 12px;
-	}
-
-	.map-placeholder {
-		background: #1a1a1a;
-		border-radius: 8px;
-		height: 200px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.map-icon {
-		font-size: 48px;
-		opacity: 0.3;
-	}
-
 	/* Empty State */
 	.empty-state {
 		text-align: center;
@@ -558,5 +710,17 @@
 		font-size: 14px;
 		color: #666;
 		margin: 0;
+	}
+
+	/* Responsive */
+	@media (max-width: 768px) {
+		.person-item {
+			flex-wrap: wrap;
+		}
+
+		.activity-badge,
+		.group-tag {
+			order: 3;
+		}
 	}
 </style>

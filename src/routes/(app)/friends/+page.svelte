@@ -55,6 +55,8 @@
 			.neq('id', data.session!.user.id)
 			.limit(10);
 
+		console.log('Search profiles:', profiles, error);
+
 		if (!error && profiles) {
 			// Filter out existing friends and pending requests
 			const friendIds = new Set([

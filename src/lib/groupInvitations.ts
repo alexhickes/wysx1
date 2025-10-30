@@ -122,33 +122,69 @@ export async function getMyPendingInvitations(
 		.from('group_invitations')
 		.select(
 			`
+    id,
+    group_id,
+    inviter_id,
+    created_at,
+    groups(
       id,
-      group_id,
-      inviter_id,
-      created_at,
-      groups(
-        id,
-        name,
-        description,
-        is_public,
-        place:places(
+      name,
+      description,
+      is_public,
+      group_places(
+        place_id,
+        is_primary,
+        places(
           id,
           name,
           place_type
         )
-      ),
-      inviter:profiles!group_invitations_inviter_id_fkey(
-        id,
-        username,
-        display_name
       )
-    `
+    ),
+    inviter:profiles!group_invitations_inviter_id_fkey(
+      id,
+      username,
+      display_name
+    )
+  `
 		)
 		.eq('invitee_id', session.session.user.id)
 		.eq('status', 'pending')
 		.order('created_at', { ascending: false });
 
 	return { data, error };
+
+	// const { data, error } = await supabase
+	// 	.from('group_invitations')
+	// 	.select(
+	// 		`
+	//   id,
+	//   group_id,
+	//   inviter_id,
+	//   created_at,
+	//   groups(
+	//     id,
+	//     name,
+	//     description,
+	//     is_public,
+	//     place:places(
+	//       id,
+	//       name,
+	//       place_type
+	//     )
+	//   ),
+	//   inviter:profiles!group_invitations_inviter_id_fkey(
+	//     id,
+	//     username,
+	//     display_name
+	//   )
+	// `
+	// 	)
+	// 	.eq('invitee_id', session.session.user.id)
+	// 	.eq('status', 'pending')
+	// 	.order('created_at', { ascending: false });
+
+	// return { data, error };
 }
 
 /**

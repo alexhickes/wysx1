@@ -133,9 +133,7 @@
 							</div>
 							<div class="card-info">
 								<h3 class="group-name">{group?.name || 'Unknown Group'}</h3>
-								<div class="place-name">
-									📍 {place?.name || 'Unknown Place'}
-								</div>
+								<div class="place-name">(group_members.size) group members</div>
 							</div>
 						</div>
 
