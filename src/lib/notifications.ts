@@ -63,41 +63,46 @@ export async function subscribeToPushNotifications(
 	}
 
 	try {
-		// Request permission first
-		const hasPermission = await requestNotificationPermission();
-		if (!hasPermission) {
-			console.log('Notification permission not granted');
-			return null;
-		}
-
-		// Check if VAPID key is configured
+		// Check if VAPID key is configured first
 		if (!PUBLIC_VAPID_KEY || PUBLIC_VAPID_KEY.trim() === '') {
 			console.warn('VAPID public key not configured. Push notifications disabled.');
 			console.warn('Generate keys with: npx web-push generate-vapid-keys');
 			console.warn('Then add PUBLIC_VAPID_KEY to your .env file');
-			// Still allow basic notifications without push
 			return null;
 		}
 
 		// Wait for service worker to be ready
 		const registration = await navigator.serviceWorker.ready;
 
+		// Add small delay to ensure service worker is fully activated
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
 		// Check if already subscribed
 		let subscription = await registration.pushManager.getSubscription();
 
-		if (!subscription) {
-			console.log('Subscribing to push notifications with VAPID key...');
-
-			// Subscribe to push notifications
-			subscription = await registration.pushManager.subscribe({
-				userVisibleOnly: true,
-				applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY)
-			});
-
-			console.log('Push subscription created:', subscription.endpoint);
-		} else {
+		if (subscription) {
 			console.log('Already subscribed to push notifications');
+			// Still save/update subscription in case it changed
+			await saveSubscription(supabase, userId, subscription);
+			return subscription;
 		}
+
+		// Request permission after confirming service worker is ready
+		const hasPermission = await requestNotificationPermission();
+		if (!hasPermission) {
+			console.log('Notification permission not granted');
+			return null;
+		}
+
+		console.log('Subscribing to push notifications with VAPID key...');
+
+		// Subscribe to push notifications
+		subscription = await registration.pushManager.subscribe({
+			userVisibleOnly: true,
+			applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY)
+		});
+
+		console.log('Push subscription created:', subscription.endpoint);
 
 		// Save subscription to database
 		await saveSubscription(supabase, userId, subscription);
@@ -114,6 +119,13 @@ export async function subscribeToPushNotifications(
 			);
 			console.error('Current key length:', PUBLIC_VAPID_KEY?.length || 0);
 			console.error('Expected: 88 characters (base64url encoded)');
+		} else if (error.name === 'AbortError') {
+			console.error(
+				'Push subscription failed - service worker may not be ready. This is likely a race condition.'
+			);
+			console.error('Try calling this function again after a short delay.');
+		} else if (error.name === 'NotAllowedError') {
+			console.error('User denied notification permission');
 		}
 
 		return null;
