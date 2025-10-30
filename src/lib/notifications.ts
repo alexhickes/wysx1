@@ -50,6 +50,13 @@ export async function requestNotificationPermission(): Promise<boolean> {
 	return permission === 'granted';
 }
 
+// Add iOS detection and PWA check
+function isIOSPWA() {
+	const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+	const isStandalone = (window.navigator as any).standalone === true;
+	return isIOS && isStandalone;
+}
+
 /**
  * Subscribe to push notifications
  */
@@ -57,44 +64,63 @@ export async function subscribeToPushNotifications(
 	supabase: SupabaseClient,
 	userId: string
 ): Promise<PushSubscription | null> {
+	console.log('🔔 Starting push notification subscription...');
+	console.log('📱 User Agent:', navigator.userAgent);
+
+	// iOS check
+	const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+	if (isIOS && !isIOSPWA()) {
+		console.warn('⚠️ iOS requires app to be added to home screen for push notifications');
+		// Show user instructions to add to home screen
+		return null;
+	}
+
 	if (!isNotificationSupported()) {
-		console.error('Push notifications not supported');
+		console.error('❌ Push notifications not supported on this device/browser');
+		console.log('ServiceWorker support:', 'serviceWorker' in navigator);
+		console.log('PushManager support:', 'PushManager' in window);
+		console.log('Notification support:', 'Notification' in window);
 		return null;
 	}
 
 	try {
 		// Check if VAPID key is configured first
 		if (!PUBLIC_VAPID_KEY || PUBLIC_VAPID_KEY.trim() === '') {
-			console.warn('VAPID public key not configured. Push notifications disabled.');
-			console.warn('Generate keys with: npx web-push generate-vapid-keys');
-			console.warn('Then add PUBLIC_VAPID_KEY to your .env file');
+			console.warn('⚠️ VAPID public key not configured');
 			return null;
 		}
 
+		console.log('✓ VAPID key configured, length:', PUBLIC_VAPID_KEY.length);
+
 		// Wait for service worker to be ready
+		console.log('⏳ Waiting for service worker...');
 		const registration = await navigator.serviceWorker.ready;
+		console.log('✓ Service worker ready:', registration.active?.state);
 
 		// Add small delay to ensure service worker is fully activated
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		// Check if already subscribed
+		console.log('🔍 Checking existing subscription...');
 		let subscription = await registration.pushManager.getSubscription();
 
 		if (subscription) {
-			console.log('Already subscribed to push notifications');
-			// Still save/update subscription in case it changed
+			console.log('✓ Already subscribed:', subscription.endpoint);
 			await saveSubscription(supabase, userId, subscription);
 			return subscription;
 		}
 
 		// Request permission after confirming service worker is ready
+		console.log('🔐 Requesting notification permission...');
 		const hasPermission = await requestNotificationPermission();
+		console.log('Permission result:', Notification.permission);
+
 		if (!hasPermission) {
 			console.log('Notification permission not granted');
 			return null;
 		}
 
-		console.log('Subscribing to push notifications with VAPID key...');
+		console.log('📤 Subscribing to push notifications...');
 
 		// Subscribe to push notifications
 		subscription = await registration.pushManager.subscribe({
@@ -102,30 +128,28 @@ export async function subscribeToPushNotifications(
 			applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY)
 		});
 
-		console.log('Push subscription created:', subscription.endpoint);
+		console.log('✓ Push subscription created:', subscription.endpoint);
 
 		// Save subscription to database
+		console.log('💾 Saving subscription to database...');
 		await saveSubscription(supabase, userId, subscription);
+		console.log('✓ Subscription saved successfully');
 
-		console.log('Successfully subscribed to push notifications');
 		return subscription;
 	} catch (error: any) {
-		console.error('Failed to subscribe to push notifications:', error);
+		console.error('Failed to subscribe:', error);
+		console.error('Error name:', error.name);
+		console.error('Error message:', error.message);
+		console.error('Error stack:', error.stack);
 
-		// Provide helpful error messages
 		if (error.name === 'InvalidAccessError') {
-			console.error(
-				'VAPID key is invalid or malformed. Please check your PUBLIC_VAPID_KEY environment variable.'
-			);
-			console.error('Current key length:', PUBLIC_VAPID_KEY?.length || 0);
-			console.error('Expected: 88 characters (base64url encoded)');
+			console.error('VAPID key is invalid');
 		} else if (error.name === 'AbortError') {
-			console.error(
-				'Push subscription failed - service worker may not be ready. This is likely a race condition.'
-			);
-			console.error('Try calling this function again after a short delay.');
+			console.error('Push subscription aborted - race condition');
 		} else if (error.name === 'NotAllowedError') {
 			console.error('User denied notification permission');
+		} else if (error.name === 'NotSupportedError') {
+			console.error('Push notifications not supported on this device');
 		}
 
 		return null;
@@ -155,25 +179,54 @@ export async function unsubscribeFromPushNotifications(
 	}
 }
 
-/**
- * Save push subscription to database
- */
 async function saveSubscription(
 	supabase: SupabaseClient,
 	userId: string,
 	subscription: PushSubscription
-): Promise<void> {
-	const { error } = await supabase.from('push_subscriptions').upsert({
-		user_id: userId,
-		subscription: subscription.toJSON(),
-		updated_at: new Date().toISOString()
-	});
+) {
+	console.log('💾 Saving subscription for user:', userId);
+
+	const subscriptionJson = subscription.toJSON();
+	console.log('Subscription data:', subscriptionJson);
+
+	const { data, error } = await supabase.from('push_subscriptions').upsert(
+		{
+			user_id: userId,
+			subscription: subscriptionJson,
+			updated_at: new Date().toISOString()
+		},
+		{
+			onConflict: 'user_id'
+		}
+	);
 
 	if (error) {
-		console.error('Failed to save subscription:', error);
+		console.error('❌ Failed to save subscription to database:', error);
 		throw error;
 	}
+
+	console.log('✓ Subscription saved to database:', data);
 }
+
+// /**
+//  * Save push subscription to database
+//  */
+// async function saveSubscription(
+// 	supabase: SupabaseClient,
+// 	userId: string,
+// 	subscription: PushSubscription
+// ): Promise<void> {
+// 	const { error } = await supabase.from('push_subscriptions').upsert({
+// 		user_id: userId,
+// 		subscription: subscription.toJSON(),
+// 		updated_at: new Date().toISOString()
+// 	});
+
+// 	if (error) {
+// 		console.error('Failed to save subscription:', error);
+// 		throw error;
+// 	}
+// }
 
 /**
  * Remove push subscription from database
