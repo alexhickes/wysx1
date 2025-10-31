@@ -8,13 +8,17 @@
 	import {
 		subscribeToPushNotifications,
 		hasPushSubscription,
-		getNotificationPermission
+		getNotificationPermission,
+		syncPushSubscription
 	} from '$lib/notifications';
 	import { startGeofencing, stopGeofencing, loadActiveCheckIns } from '$lib/geofence';
 	import { initializeQueueProcessor } from '$lib/offlineQueue';
 
 	let { data, children } = $props();
 	let { supabase, session } = $derived(data);
+
+	let hasSubscription = false;
+	let loading = true;
 
 	let notificationsEnabled = false;
 	let geofencingActive = false;
@@ -71,7 +75,7 @@
 		const userId = data.session.user.id;
 
 		// Check if user has push subscription
-		const hasSubscription = await hasPushSubscription();
+		const hasSubscription = await hasPushSubscription(data.supabase, userId);
 		notificationsEnabled = hasSubscription;
 
 		// Load user's profile settings
@@ -146,19 +150,40 @@
 		}
 	}
 
+	onMount(async () => {
+		if (!data.session?.user) return;
+		const userId = data.session.user.id;
+		// Sync subscriptions when app loads
+		await syncPushSubscription(data.supabase, userId);
+
+		// Check if user has valid subscription
+		hasSubscription = await hasPushSubscription(data.supabase, userId);
+		loading = false;
+	});
+
 	async function enableNotifications() {
 		if (!data.session?.user) return;
+		const userId = data.session.user.id;
 
-		const subscription = await subscribeToPushNotifications(data.supabase, data.session.user.id);
-
+		const subscription = await subscribeToPushNotifications(data.supabase, userId);
 		if (subscription) {
-			notificationsEnabled = true;
-			showNotificationPrompt = false;
-			console.log('Notifications enabled successfully');
-		} else {
-			alert('Failed to enable notifications. Please check your browser settings.');
+			hasSubscription = true;
 		}
 	}
+
+	// async function enableNotifications() {
+	// 	if (!data.session?.user) return;
+
+	// 	const subscription = await subscribeToPushNotifications(data.supabase, data.session.user.id);
+
+	// 	if (subscription) {
+	// 		notificationsEnabled = true;
+	// 		showNotificationPrompt = false;
+	// 		console.log('Notifications enabled successfully');
+	// 	} else {
+	// 		alert('Failed to enable notifications. Please check your browser settings.');
+	// 	}
+	// }
 
 	function dismissNotificationPrompt() {
 		showNotificationPrompt = false;
