@@ -67,19 +67,8 @@ export async function subscribeToPushNotifications(
 	console.log('🔔 Starting push notification subscription...');
 	console.log('📱 User Agent:', navigator.userAgent);
 
-	// iOS check
-	const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-	if (isIOS && !isIOSPWA()) {
-		console.warn('⚠️ iOS requires app to be added to home screen for push notifications');
-		// Show user instructions to add to home screen
-		return null;
-	}
-
 	if (!isNotificationSupported()) {
 		console.error('❌ Push notifications not supported on this device/browser');
-		console.log('ServiceWorker support:', 'serviceWorker' in navigator);
-		console.log('PushManager support:', 'PushManager' in window);
-		console.log('Notification support:', 'Notification' in window);
 		return null;
 	}
 
@@ -90,22 +79,34 @@ export async function subscribeToPushNotifications(
 			return null;
 		}
 
-		console.log('✓ VAPID key configured, length:', PUBLIC_VAPID_KEY.length);
+		console.log('✓ VAPID key configured');
 
-		// Wait for service worker to be ready
+		// Wait for service worker to be ready with extra validation
 		console.log('⏳ Waiting for service worker...');
 		const registration = await navigator.serviceWorker.ready;
-		console.log('✓ Service worker ready:', registration.active?.state);
 
-		// Add small delay to ensure service worker is fully activated
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		// Ensure service worker is actually active
+		if (!registration.active) {
+			console.error('❌ Service worker not active');
+			return null;
+		}
+
+		console.log('✓ Service worker ready, state:', registration.active.state);
+
+		// Longer delay for mobile devices - they need more time
+		const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+			navigator.userAgent
+		);
+		const delay = isMobile ? 500 : 200;
+		console.log(`⏳ Waiting ${delay}ms for service worker to fully activate...`);
+		await new Promise((resolve) => setTimeout(resolve, delay));
 
 		// Check if already subscribed
 		console.log('🔍 Checking existing subscription...');
 		let subscription = await registration.pushManager.getSubscription();
 
 		if (subscription) {
-			console.log('✓ Already subscribed:', subscription.endpoint);
+			console.log('✓ Already subscribed');
 			await saveSubscription(supabase, userId, subscription);
 			return subscription;
 		}
@@ -116,19 +117,15 @@ export async function subscribeToPushNotifications(
 		console.log('Permission result:', Notification.permission);
 
 		if (!hasPermission) {
-			console.log('Notification permission not granted');
+			console.log('❌ Notification permission not granted');
 			return null;
 		}
 
+		// Retry logic for push subscription (mobile needs this)
 		console.log('📤 Subscribing to push notifications...');
+		subscription = await subscribeWithRetry(registration, PUBLIC_VAPID_KEY, 3);
 
-		// Subscribe to push notifications
-		subscription = await registration.pushManager.subscribe({
-			userVisibleOnly: true,
-			applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY)
-		});
-
-		console.log('✓ Push subscription created:', subscription.endpoint);
+		console.log('✓ Push subscription created');
 
 		// Save subscription to database
 		console.log('💾 Saving subscription to database...');
@@ -137,15 +134,15 @@ export async function subscribeToPushNotifications(
 
 		return subscription;
 	} catch (error: any) {
-		console.error('Failed to subscribe:', error);
+		console.error('❌ Failed to subscribe:', error);
 		console.error('Error name:', error.name);
 		console.error('Error message:', error.message);
-		console.error('Error stack:', error.stack);
 
 		if (error.name === 'InvalidAccessError') {
 			console.error('VAPID key is invalid');
 		} else if (error.name === 'AbortError') {
-			console.error('Push subscription aborted - race condition');
+			console.error('Push subscription aborted - service worker not ready or race condition');
+			console.error('Try again in a few seconds');
 		} else if (error.name === 'NotAllowedError') {
 			console.error('User denied notification permission');
 		} else if (error.name === 'NotSupportedError') {
@@ -155,6 +152,148 @@ export async function subscribeToPushNotifications(
 		return null;
 	}
 }
+
+/**
+ * Subscribe with retry logic for mobile devices
+ */
+async function subscribeWithRetry(
+	registration: ServiceWorkerRegistration,
+	vapidKey: string,
+	maxRetries: number = 3
+): Promise<PushSubscription> {
+	let lastError: Error | null = null;
+
+	for (let attempt = 1; attempt <= maxRetries; attempt++) {
+		try {
+			console.log(`📤 Subscription attempt ${attempt}/${maxRetries}...`);
+
+			const subscription = await registration.pushManager.subscribe({
+				userVisibleOnly: true,
+				applicationServerKey: urlBase64ToUint8Array(vapidKey)
+			});
+
+			console.log(`✓ Subscription successful on attempt ${attempt}`);
+			return subscription;
+		} catch (error: any) {
+			console.warn(`⚠️ Attempt ${attempt} failed:`, error.name);
+			lastError = error;
+
+			// Don't retry on permission errors
+			if (error.name === 'NotAllowedError' || error.name === 'NotSupportedError') {
+				throw error;
+			}
+
+			// Wait longer between retries (exponential backoff)
+			if (attempt < maxRetries) {
+				const waitTime = attempt * 500; // 500ms, 1000ms, 1500ms
+				console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+				await new Promise((resolve) => setTimeout(resolve, waitTime));
+			}
+		}
+	}
+
+	console.error(`❌ All ${maxRetries} subscription attempts failed`);
+	throw lastError || new Error('Push subscription failed');
+}
+
+// /**
+//  * Subscribe to push notifications
+//  */
+// export async function subscribeToPushNotifications(
+// 	supabase: SupabaseClient,
+// 	userId: string
+// ): Promise<PushSubscription | null> {
+// 	console.log('🔔 Starting push notification subscription...');
+// 	console.log('📱 User Agent:', navigator.userAgent);
+
+// 	// iOS check
+// 	const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+// 	if (isIOS && !isIOSPWA()) {
+// 		console.warn('⚠️ iOS requires app to be added to home screen for push notifications');
+// 		// Show user instructions to add to home screen
+// 		return null;
+// 	}
+
+// 	if (!isNotificationSupported()) {
+// 		console.error('❌ Push notifications not supported on this device/browser');
+// 		console.log('ServiceWorker support:', 'serviceWorker' in navigator);
+// 		console.log('PushManager support:', 'PushManager' in window);
+// 		console.log('Notification support:', 'Notification' in window);
+// 		return null;
+// 	}
+
+// 	try {
+// 		// Check if VAPID key is configured first
+// 		if (!PUBLIC_VAPID_KEY || PUBLIC_VAPID_KEY.trim() === '') {
+// 			console.warn('⚠️ VAPID public key not configured');
+// 			return null;
+// 		}
+
+// 		console.log('✓ VAPID key configured, length:', PUBLIC_VAPID_KEY.length);
+
+// 		// Wait for service worker to be ready
+// 		console.log('⏳ Waiting for service worker...');
+// 		const registration = await navigator.serviceWorker.ready;
+// 		console.log('✓ Service worker ready:', registration.active?.state);
+
+// 		// Add small delay to ensure service worker is fully activated
+// 		await new Promise((resolve) => setTimeout(resolve, 100));
+
+// 		// Check if already subscribed
+// 		console.log('🔍 Checking existing subscription...');
+// 		let subscription = await registration.pushManager.getSubscription();
+
+// 		if (subscription) {
+// 			console.log('✓ Already subscribed:', subscription.endpoint);
+// 			await saveSubscription(supabase, userId, subscription);
+// 			return subscription;
+// 		}
+
+// 		// Request permission after confirming service worker is ready
+// 		console.log('🔐 Requesting notification permission...');
+// 		const hasPermission = await requestNotificationPermission();
+// 		console.log('Permission result:', Notification.permission);
+
+// 		if (!hasPermission) {
+// 			console.log('Notification permission not granted');
+// 			return null;
+// 		}
+
+// 		console.log('📤 Subscribing to push notifications...');
+
+// 		// Subscribe to push notifications
+// 		subscription = await registration.pushManager.subscribe({
+// 			userVisibleOnly: true,
+// 			applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY)
+// 		});
+
+// 		console.log('✓ Push subscription created:', subscription.endpoint);
+
+// 		// Save subscription to database
+// 		console.log('💾 Saving subscription to database...');
+// 		await saveSubscription(supabase, userId, subscription);
+// 		console.log('✓ Subscription saved successfully');
+
+// 		return subscription;
+// 	} catch (error: any) {
+// 		console.error('Failed to subscribe:', error);
+// 		console.error('Error name:', error.name);
+// 		console.error('Error message:', error.message);
+// 		console.error('Error stack:', error.stack);
+
+// 		if (error.name === 'InvalidAccessError') {
+// 			console.error('VAPID key is invalid');
+// 		} else if (error.name === 'AbortError') {
+// 			console.error('Push subscription aborted - race condition');
+// 		} else if (error.name === 'NotAllowedError') {
+// 			console.error('User denied notification permission');
+// 		} else if (error.name === 'NotSupportedError') {
+// 			console.error('Push notifications not supported on this device');
+// 		}
+
+// 		return null;
+// 	}
+// }
 
 /**
  * Unsubscribe from push notifications

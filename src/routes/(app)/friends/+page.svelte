@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import type { PageData } from './$types';
 	import type { MyFriend, PendingRequestReceived, PendingRequestSent } from '$lib/types';
 	import {
@@ -29,17 +29,38 @@
 	// Active tab: 'friends' or 'requests'
 	let activeTab: 'friends' | 'requests' = 'friends';
 
+	let abortController: AbortController | null = null;
+
 	onMount(async () => {
 		await loadFriends();
 		loading = false;
 	});
 
 	async function loadFriends() {
-		friends = await getFriends(data.supabase);
-		console.log('Friends:', friends);
-		pendingReceived = await getPendingRequestsReceived(data.supabase);
-		pendingSent = await getPendingRequestsSent(data.supabase);
+		// Cancel previous request if still running
+		if (abortController) {
+			abortController.abort();
+		}
+
+		abortController = new AbortController();
+
+		try {
+			friends = await getFriends(data.supabase);
+			pendingReceived = await getPendingRequestsReceived(data.supabase);
+			pendingSent = await getPendingRequestsSent(data.supabase);
+		} catch (error: any) {
+			if (error.name !== 'AbortError') {
+				console.error('Load friends error:', error);
+			}
+		}
 	}
+
+	// async function loadFriends() {
+	// 	friends = await getFriends(data.supabase);
+	// 	console.log('Friends:', friends);
+	// 	pendingReceived = await getPendingRequestsReceived(data.supabase);
+	// 	pendingSent = await getPendingRequestsSent(data.supabase);
+	// }
 
 	async function handleSearch() {
 		if (searchQuery.trim().length < 2) {
@@ -139,6 +160,12 @@
 	} else {
 		searchResults = [];
 	}
+
+	onDestroy(() => {
+		if (abortController) {
+			abortController.abort();
+		}
+	});
 </script>
 
 <svelte:head>

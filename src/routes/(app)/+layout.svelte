@@ -1,5 +1,7 @@
 <!-- src/routes/(app)/+layout.svelte -->
 <script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
+	import { browser } from '$app/environment';
 	import '../../app.css';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -9,7 +11,6 @@
 	export let data: LayoutData;
 
 	$: profile = data.profile;
-	console.log('LayoutData > data.profile:', data.profile);
 	$: currentPath = $page.url.pathname;
 
 	const navItems = [
@@ -23,6 +24,32 @@
 		await data.supabase.auth.signOut();
 		goto('/');
 	}
+
+	let isPageVisible = true;
+
+	function handleVisibilityChange() {
+		isPageVisible = !document.hidden;
+
+		if (isPageVisible) {
+			// Page became visible again - refresh data if needed
+			console.log('Page visible again');
+		} else {
+			// Page hidden - cancel pending operations
+			console.log('Page hidden');
+		}
+	}
+
+	onMount(() => {
+		if (browser) {
+			document.addEventListener('visibilitychange', handleVisibilityChange);
+		}
+	});
+
+	onDestroy(() => {
+		if (browser) {
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+		}
+	});
 </script>
 
 <div class="app-shell">
