@@ -143,6 +143,7 @@ export type MyActiveCheckIn = {
 	activity_id: string | null;
 	checked_in_at: string;
 	place_name: string;
+	place_type: string;
 	place_lat: number;
 	place_lng: number;
 	group_name: string | null;

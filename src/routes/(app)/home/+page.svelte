@@ -1,99 +1,40 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
-	import type { CheckIn, MyActiveCheckIn } from '$lib/types';
+	import type { MyActiveCheckIn } from '$lib/types';
+	import { friendCheckIns, groupCheckInsByPlace } from '$lib/stores/checkins';
 
 	export let data: PageData;
 
 	let activeCheckIns: MyActiveCheckIn[] = [];
-	let friendsCheckIns: any[] = [];
 	let recentActivity: any[] = [];
 	let loading = true;
 
+	// Reactive statement to group check-ins whenever they change
+	$: friendsCheckInsGrouped = groupCheckInsByPlace($friendCheckIns);
+
 	onMount(async () => {
-		await Promise.all([loadActiveCheckIns(), loadFriendsCheckIns(), loadRecentActivity()]);
+		// Load initial data
+		await Promise.all([loadActiveCheckIns(), loadRecentActivity()]);
+
+		// Initialize real-time subscriptions for friends' check-ins
+		if (data.session?.user?.id) {
+			await friendCheckIns.init(data.supabase, data.session.user.id);
+		}
+
 		loading = false;
+	});
+
+	onDestroy(() => {
+		// Clean up real-time subscriptions
+		friendCheckIns.cleanup(data.supabase);
 	});
 
 	async function loadActiveCheckIns() {
 		const { data: checkIns } = await data.supabase.from('my_active_checkins').select('*');
-
 		console.log('My Active Check-Ins:', checkIns);
 		activeCheckIns = checkIns || [];
-	}
-
-	async function loadFriendsCheckIns() {
-		console.log('=== LOADING FRIENDS CHECK-INS ===');
-
-		// Get all active check-ins from group members
-		// This query respects RLS and visibility settings
-		const { data: checkIns, error } = await data.supabase
-			.from('check_ins')
-			.select(
-				`
-				id,
-				user_id,
-				place_id,
-				group_id,
-				checked_in_at,
-				activity_id,
-				places(
-					id,
-					name,
-					place_type,
-					latitude,
-					longitude
-				),
-				profiles(
-					id,
-					username,
-					display_name
-				),
-				groups(
-					id,
-					name
-				),
-				activities(
-					id,
-					name,
-					icon
-				)
-			`
-			)
-			.is('checked_out_at', null)
-			.neq('user_id', data.session?.user.id); // Exclude my own check-ins
-
-		if (error) {
-			console.error('Error loading friends check-ins:', error);
-			friendsCheckIns = [];
-			return;
-		}
-
-		console.log('Raw friends check-ins:', checkIns);
-
-		// Group by place to show multiple people at same location
-		const placeGroups = new Map();
-
-		checkIns?.forEach((checkIn) => {
-			if (!checkIn.places) return;
-
-			const placeId = checkIn.place_id;
-			if (!placeGroups.has(placeId)) {
-				placeGroups.set(placeId, {
-					place: checkIn.places,
-					checkIns: []
-				});
-			}
-			placeGroups.get(placeId).checkIns.push(checkIn);
-		});
-
-		// Convert to array and sort by number of people (most popular first)
-		friendsCheckIns = Array.from(placeGroups.values()).sort(
-			(a, b) => b.checkIns.length - a.checkIns.length
-		);
-
-		console.log('Grouped friends check-ins:', friendsCheckIns);
 	}
 
 	async function loadRecentActivity() {
@@ -224,12 +165,18 @@
 			</section>
 		{/if}
 
-		<!-- Friends at Locations -->
-		{#if friendsCheckIns.length > 0}
+		<!-- Friends at Locations - Now Real-time! -->
+		{#if friendsCheckInsGrouped.length > 0}
 			<section class="friends-section">
-				<h2 class="section-title">Friends at locations</h2>
+				<h2 class="section-title">
+					Friends at locations
+					<span class="live-indicator-title">
+						<span class="pulse-dot-small"></span>
+						LIVE
+					</span>
+				</h2>
 
-				{#each friendsCheckIns as placeGroup}
+				{#each friendsCheckInsGrouped as placeGroup (placeGroup.place.id)}
 					<div
 						class="place-card"
 						role="button"
@@ -254,7 +201,7 @@
 						</div>
 
 						<div class="people-list">
-							{#each placeGroup.checkIns as checkIn}
+							{#each placeGroup.checkIns as checkIn (checkIn.id)}
 								<div class="person-item">
 									<div class="person-avatar">
 										{checkIn.profiles?.display_name?.charAt(0)?.toUpperCase() ||
@@ -285,6 +232,13 @@
 						</div>
 					</div>
 				{/each}
+			</section>
+		{:else}
+			<section class="friends-section">
+				<h2 class="section-title">Friends at locations</h2>
+				<div class="empty-state-small">
+					<p>No friends are currently checked in</p>
+				</div>
 			</section>
 		{/if}
 
@@ -390,6 +344,41 @@
 		font-weight: 700;
 		margin: 0 0 16px 0;
 		color: #fff;
+	}
+
+	/* NEW: Live indicator in title */
+	.live-indicator-title {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 11px;
+		color: var(--color-primary);
+		font-weight: 700;
+		margin-left: 8px;
+	}
+
+	.pulse-dot-small {
+		display: block;
+		width: 8px;
+		height: 8px;
+		background: var(--color-primary);
+		border-radius: 50%;
+		animation: pulse-ring 2s infinite;
+	}
+
+	/* NEW: Empty state for friends section */
+	.empty-state-small {
+		text-align: center;
+		padding: 40px 20px;
+		background: #0a0a0a;
+		border: 1px solid #1a1a1a;
+		border-radius: 12px;
+	}
+
+	.empty-state-small p {
+		font-size: 14px;
+		color: #666;
+		margin: 0;
 	}
 
 	/* Activity Cards */
@@ -502,6 +491,8 @@
 		margin-bottom: 12px;
 		cursor: pointer;
 		transition: all 0.2s;
+		/* NEW: Animation for real-time updates */
+		animation: fadeIn 0.3s ease-out;
 	}
 
 	.place-card:hover {
@@ -599,6 +590,8 @@
 		padding: 12px;
 		background: #000;
 		border-radius: 8px;
+		/* NEW: Animation for real-time updates */
+		animation: slideIn 0.3s ease-out;
 	}
 
 	.person-avatar {
@@ -710,6 +703,27 @@
 		font-size: 14px;
 		color: #666;
 		margin: 0;
+	}
+
+	/* NEW: Animations for real-time updates */
+	@keyframes slideIn {
+		from {
+			opacity: 0;
+			transform: translateY(-10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	@keyframes fadeIn {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
 	}
 
 	/* Responsive */

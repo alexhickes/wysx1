@@ -2,9 +2,9 @@
 <script lang="ts">
 	import '../styles.css';
 	import { invalidate } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
-
+	import { notifications, unreadCount } from '$lib/stores/notifications';
 	import {
 		subscribeToPushNotifications,
 		hasPushSubscription,
@@ -150,17 +150,6 @@
 		}
 	}
 
-	onMount(async () => {
-		if (!data.session?.user) return;
-		const userId = data.session.user.id;
-		// Sync subscriptions when app loads
-		await syncPushSubscription(data.supabase, userId);
-
-		// Check if user has valid subscription
-		hasSubscription = await hasPushSubscription(data.supabase, userId);
-		loading = false;
-	});
-
 	async function enableNotifications() {
 		if (!data.session?.user) return;
 		const userId = data.session.user.id;
@@ -204,6 +193,26 @@
 		const dayInMs = 24 * 60 * 60 * 1000;
 		return Date.now() - dismissedTime > dayInMs; // Show again after 1 day
 	}
+
+	onMount(async () => {
+		if (!data.session?.user) return;
+		const userId = data.session.user.id;
+		// Sync subscriptions when app loads
+		await syncPushSubscription(data.supabase, userId);
+
+		// Check if user has valid subscription
+		hasSubscription = await hasPushSubscription(data.supabase, userId);
+		loading = false;
+
+		// Initialize realtime notifications
+		notifications.init(supabase, userId);
+	});
+
+	onDestroy(() => {
+		if (supabase) {
+			notifications.cleanup(supabase);
+		}
+	});
 </script>
 
 <svelte:head>
