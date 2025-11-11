@@ -245,6 +245,7 @@
 
 	async function getCurrentLocation() {
 		gettingLocation = true;
+		console.log('Getting current location...');
 
 		if (!navigator.geolocation) {
 			createPlaceError = 'Geolocation is not supported by your browser';
@@ -252,7 +253,9 @@
 			return;
 		}
 
-		navigator.geolocation.getCurrentPosition(
+		// ----
+		// TODO: This is a fix for working in Gatwick airport.
+		navigator.geolocation.watchPosition(
 			(position) => {
 				currentLocation = {
 					latitude: position.coords.latitude,
@@ -270,6 +273,26 @@
 				maximumAge: 0
 			}
 		);
+		// ----
+
+		// navigator.geolocation.getCurrentPosition(
+		// 	(position) => {
+		// 		currentLocation = {
+		// 			latitude: position.coords.latitude,
+		// 			longitude: position.coords.longitude
+		// 		};
+		// 		gettingLocation = false;
+		// 	},
+		// 	(error) => {
+		// 		createPlaceError = 'Unable to get your location';
+		// 		gettingLocation = false;
+		// 	},
+		// 	{
+		// 		enableHighAccuracy: true,
+		// 		timeout: 10000,
+		// 		maximumAge: 0
+		// 	}
+		// );
 	}
 
 	async function openMapDrawer() {

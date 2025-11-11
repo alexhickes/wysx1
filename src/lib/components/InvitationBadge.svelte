@@ -1,51 +1,58 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import type { SupabaseClient } from '@supabase/supabase-js';
-	import { getMyPendingInvitations } from '$lib/groupInvitations';
+	import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+	import {
+		getMyPendingInvitations,
+		subscribeGroupInvitationChanges,
+		unsubscribeGroupInvitationChanges
+	} from '$lib/groupInvitations';
 
-	export let supabase: SupabaseClient;
+	interface Props {
+		supabase: SupabaseClient;
+		userId: string;
+	}
 
-	let count = 0;
-	let loading = true;
-	let subscription: any = null;
+	let { supabase, userId }: Props = $props();
+
+	let count = $state(0);
+	let loading = $state(true);
+	let realtimeChannel = $state<RealtimeChannel | null>(null);
 
 	onMount(async () => {
+		console.log('🔔 InvitationBadge mounted');
 		await loadCount();
-		subscribeToChanges();
 		loading = false;
+
+		// Setup Realtime subscription
+		if (userId) {
+			console.log('📡 Setting up group invitation subscription...');
+			realtimeChannel = subscribeGroupInvitationChanges(supabase, userId, handleRealtimeUpdate);
+		}
 	});
 
 	onDestroy(() => {
-		if (subscription) {
-			subscription.unsubscribe();
+		console.log('🔌 InvitationBadge unmounting');
+		if (realtimeChannel) {
+			unsubscribeGroupInvitationChanges(supabase, realtimeChannel);
 		}
 	});
 
+	/**
+	 * Handle realtime updates - reload count when invitations change
+	 */
+	function handleRealtimeUpdate() {
+		console.log('🔄 Group invitation update received, reloading count...');
+		loadCount();
+	}
+
 	async function loadCount() {
 		const { data, error } = await getMyPendingInvitations(supabase);
-		console.log('Pending invitations data:', data, 'error:', error);
+		console.log('📊 Pending invitations:', data?.length || 0);
+
 		if (!error && data) {
 			count = data.length;
 		}
-	}
-
-	function subscribeToChanges() {
-		// Subscribe to changes in group_invitations table
-		subscription = supabase
-			.channel('invitation_changes')
-			.on(
-				'postgres_changes',
-				{
-					event: '*',
-					schema: 'public',
-					table: 'group_invitations'
-				},
-				() => {
-					loadCount();
-				}
-			)
-			.subscribe();
 	}
 
 	function handleClick() {
@@ -54,7 +61,7 @@
 </script>
 
 {#if !loading && count > 0}
-	<button class="invitation-badge" on:click={handleClick}>
+	<button class="invitation-badge" onclick={handleClick}>
 		<span class="badge-icon">📬</span>
 		<span class="badge-count">{count}</span>
 	</button>

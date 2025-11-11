@@ -3,39 +3,234 @@
 	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 	import type { MyActiveCheckIn } from '$lib/types';
-	import { friendCheckIns, groupCheckInsByPlace } from '$lib/stores/checkins';
+	import type { RealtimeChannel } from '@supabase/supabase-js';
+	import {
+		subscribeCheckInChanges,
+		subscribeMyCheckIns,
+		unsubscribeCheckInChanges
+	} from '$lib/checkins';
+	import { browser } from '$app/environment';
 
-	export let data: PageData;
+	let { data }: { data: PageData } = $props();
 
-	let activeCheckIns: MyActiveCheckIn[] = [];
-	let recentActivity: any[] = [];
-	let loading = true;
+	// Derived values from data
+	let { supabase, session } = $derived(data);
 
-	// Reactive statement to group check-ins whenever they change
-	$: friendsCheckInsGrouped = groupCheckInsByPlace($friendCheckIns);
+	let activeCheckIns = $state<MyActiveCheckIn[]>([]);
+	let friendCheckIns = $state<any[]>([]);
+	let recentActivity = $state<any[]>([]);
+	let loading = $state(true);
+	let friendCheckInChannel = $state<RealtimeChannel | null>(null);
+	let myCheckInChannel = $state<RealtimeChannel | null>(null);
+
+	// Group friend check-ins by place
+	let friendsCheckInsGrouped = $derived(groupCheckInsByPlace(friendCheckIns));
+
+	function groupCheckInsByPlace(checkIns: any[]) {
+		const grouped = new Map();
+
+		checkIns.forEach((checkIn) => {
+			if (!checkIn.places) return;
+
+			const placeId = checkIn.places.id;
+			if (!grouped.has(placeId)) {
+				grouped.set(placeId, {
+					place: checkIn.places,
+					checkIns: []
+				});
+			}
+			grouped.get(placeId).checkIns.push(checkIn);
+		});
+
+		return Array.from(grouped.values());
+	}
 
 	onMount(async () => {
-		// Load initial data
-		await Promise.all([loadActiveCheckIns(), loadRecentActivity()]);
+		console.log('🏠 Home page mounted');
 
-		// Initialize real-time subscriptions for friends' check-ins
+		// Load initial data
+		await Promise.all([loadActiveCheckIns(), loadFriendCheckIns(), loadRecentActivity()]);
+
+		// Setup Realtime for friends' check-ins
 		if (data.session?.user?.id) {
-			await friendCheckIns.init(data.supabase, data.session.user.id);
+			console.log('📡 Setting up friend check-in subscription...');
+			friendCheckInChannel = subscribeCheckInChanges(
+				data.supabase,
+				data.session.user.id,
+				handleFriendCheckInChange
+			);
+		}
+
+		// Setup Realtime for my own check-ins
+		if (data.session?.user?.id) {
+			console.log('📡 Setting up my check-in subscription...');
+			myCheckInChannel = subscribeMyCheckIns(
+				data.supabase,
+				data.session.user.id,
+				handleMyCheckInChange
+			);
 		}
 
 		loading = false;
+
+		// Listen for page visibility changes
+		if (browser) {
+			document.addEventListener('visibilitychange', handleVisibilityChange);
+		}
 	});
 
 	onDestroy(() => {
-		// Clean up real-time subscriptions
-		friendCheckIns.cleanup(data.supabase);
+		console.log('🏠 Home page unmounting - cleaning up');
+
+		// Cleanup friend check-in subscription
+		if (friendCheckInChannel) {
+			unsubscribeCheckInChanges(data.supabase, friendCheckInChannel);
+		}
+
+		// Cleanup my check-in subscription
+		if (myCheckInChannel) {
+			unsubscribeCheckInChanges(data.supabase, myCheckInChannel);
+		}
+
+		// Remove visibility listener
+		if (browser) {
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+		}
 	});
+
+	/**
+	 * Handle realtime updates for friends' check-ins
+	 */
+	function handleFriendCheckInChange(payload: any) {
+		console.log('🔄 Friend check-in changed, reloading...');
+		loadFriendCheckIns();
+	}
+
+	/**
+	 * Handle realtime updates for my own check-ins
+	 */
+	function handleMyCheckInChange(payload: any) {
+		console.log('🔄 My check-in changed, reloading...');
+		loadActiveCheckIns();
+		loadRecentActivity();
+	}
+
+	// Handle page visibility changes - ONLY RELOAD, don't cleanup
+	function handleVisibilityChange() {
+		if (browser && document.visibilityState === 'visible') {
+			console.log('👀 Page became visible, reloading data...');
+			Promise.all([loadActiveCheckIns(), loadFriendCheckIns(), loadRecentActivity()]);
+		}
+	}
 
 	async function loadActiveCheckIns() {
 		const { data: checkIns } = await data.supabase.from('my_active_checkins').select('*');
-		console.log('My Active Check-Ins:', checkIns);
+		console.log('📍 My Active Check-Ins:', checkIns?.length || 0);
 		activeCheckIns = checkIns || [];
 	}
+
+	async function loadFriendCheckIns() {
+		// First, get list of friend IDs
+		const { data: friendships } = await data.supabase
+			.from('my_friends') // Your view for accepted friends
+			.select('friend_id');
+
+		if (!friendships || friendships.length === 0) {
+			friendCheckIns = [];
+			return;
+		}
+
+		const friendIds = friendships.map((f) => f.friend_id);
+
+		// Then get their active check-ins
+		const { data: checkIns } = await data.supabase
+			.from('check_ins')
+			.select(
+				`
+				id,
+				user_id,
+				place_id,
+				group_id,
+				activity_id,
+				checked_in_at,
+				checked_out_at,
+				places!inner(
+					id,
+					name,
+					place_type,
+					latitude,
+					longitude
+				),
+				profiles!inner(
+					id,
+					username,
+					display_name
+				),
+				activities(
+					id,
+					name,
+					icon
+				),
+				groups(
+					id,
+					name
+				)
+				`
+			)
+			.is('checked_out_at', null)
+			.in('user_id', friendIds)
+			.order('checked_in_at', { ascending: false });
+
+		friendCheckIns = checkIns || [];
+	}
+
+	// async function loadFriendCheckIns() {
+	// 	// Query for friends' active check-ins
+	// 	// This assumes you have a view or can query based on friendships
+	// 	const { data: checkIns } = await data.supabase
+	// 		.from('check_ins')
+	// 		.select(
+	// 			`
+	// 			id,
+	// 			user_id,
+	// 			place_id,
+	// 			group_id,
+	// 			activity_id,
+	// 			checked_in_at,
+	// 			checked_out_at,
+	// 			places!inner(
+	// 				id,
+	// 				name,
+	// 				place_type,
+	// 				latitude,
+	// 				longitude
+	// 			),
+	// 			profiles!inner(
+	// 				id,
+	// 				username,
+	// 				display_name
+	// 			),
+	// 			activities(
+	// 				id,
+	// 				name,
+	// 				icon
+	// 			),
+	// 			groups(
+	// 				id,
+	// 				name
+	// 			)
+	// 		`
+	// 		)
+	// 		.is('checked_out_at', null)
+	// 		.neq('user_id', data.session?.user.id)
+	// 		.order('checked_in_at', { ascending: false });
+
+	// 	console.log('👥 Friend Check-Ins:', checkIns?.length || 0);
+
+	// 	// Filter to only show friends (you might need to join with friendships table)
+	// 	// For now, showing all active check-ins except yours
+	// 	friendCheckIns = checkIns || [];
+	// }
 
 	async function loadRecentActivity() {
 		const { data: checkIns } = await data.supabase
@@ -53,6 +248,7 @@
 			.order('checked_in_at', { ascending: false })
 			.limit(10);
 
+		console.log('📜 Recent Activity:', checkIns?.length || 0);
 		recentActivity = checkIns || [];
 	}
 
@@ -138,7 +334,7 @@
 		{#if activeCheckIns.length > 0}
 			<section class="active-section">
 				<h2 class="section-title">Currently at</h2>
-				{#each activeCheckIns as checkIn}
+				{#each activeCheckIns as checkIn (checkIn.id)}
 					<div class="activity-card active">
 						<div class="card-header">
 							<div class="location-badge">
@@ -165,7 +361,7 @@
 			</section>
 		{/if}
 
-		<!-- Friends at Locations - Now Real-time! -->
+		<!-- Friends at Locations - Real-time! -->
 		{#if friendsCheckInsGrouped.length > 0}
 			<section class="friends-section">
 				<h2 class="section-title">
@@ -181,8 +377,8 @@
 						class="place-card"
 						role="button"
 						tabindex="0"
-						on:click={() => goToPlace(placeGroup.place.id)}
-						on:keydown={(e) => e.key === 'Enter' && goToPlace(placeGroup.place.id)}
+						onclick={() => goToPlace(placeGroup.place.id)}
+						onkeydown={(e) => e.key === 'Enter' && goToPlace(placeGroup.place.id)}
 					>
 						<div class="place-header">
 							<div class="place-icon-badge">
@@ -253,7 +449,7 @@
 					<p>Start checking in to places to see your activity here</p>
 				</div>
 			{:else}
-				{#each recentActivity as activity}
+				{#each recentActivity as activity (activity.id)}
 					<div class="activity-card">
 						<div class="card-header">
 							<div class="user-info">
@@ -332,7 +528,6 @@
 		}
 	}
 
-	/* Sections */
 	.active-section,
 	.friends-section,
 	.activity-section {
@@ -346,7 +541,6 @@
 		color: #fff;
 	}
 
-	/* NEW: Live indicator in title */
 	.live-indicator-title {
 		display: inline-flex;
 		align-items: center;
@@ -366,7 +560,6 @@
 		animation: pulse-ring 2s infinite;
 	}
 
-	/* NEW: Empty state for friends section */
 	.empty-state-small {
 		text-align: center;
 		padding: 40px 20px;
@@ -381,13 +574,13 @@
 		margin: 0;
 	}
 
-	/* Activity Cards */
 	.activity-card {
 		background: #0a0a0a;
 		border-radius: 12px;
 		padding: 16px;
 		margin-bottom: 16px;
 		border: 1px solid #1a1a1a;
+		animation: fadeIn 0.3s ease-out;
 	}
 
 	.activity-card.active {
@@ -482,7 +675,6 @@
 		font-weight: 600;
 	}
 
-	/* Place Cards */
 	.place-card {
 		background: #0a0a0a;
 		border: 1px solid #1a1a1a;
@@ -491,7 +683,6 @@
 		margin-bottom: 12px;
 		cursor: pointer;
 		transition: all 0.2s;
-		/* NEW: Animation for real-time updates */
 		animation: fadeIn 0.3s ease-out;
 	}
 
@@ -590,7 +781,6 @@
 		padding: 12px;
 		background: #000;
 		border-radius: 8px;
-		/* NEW: Animation for real-time updates */
 		animation: slideIn 0.3s ease-out;
 	}
 
@@ -647,7 +837,6 @@
 		white-space: nowrap;
 	}
 
-	/* Activity Stats */
 	.activity-title {
 		font-size: 18px;
 		font-weight: 700;
@@ -680,7 +869,6 @@
 		font-weight: 600;
 	}
 
-	/* Empty State */
 	.empty-state {
 		text-align: center;
 		padding: 60px 20px;
@@ -705,7 +893,6 @@
 		margin: 0;
 	}
 
-	/* NEW: Animations for real-time updates */
 	@keyframes slideIn {
 		from {
 			opacity: 0;
@@ -726,7 +913,6 @@
 		}
 	}
 
-	/* Responsive */
 	@media (max-width: 768px) {
 		.person-item {
 			flex-wrap: wrap;

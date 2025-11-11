@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import type { PageData } from './$types';
 	import type { MyFriend, PendingRequestReceived, PendingRequestSent } from '$lib/types';
+	import type { RealtimeChannel } from '@supabase/supabase-js';
 	import {
 		getFriends,
 		getPendingRequestsReceived,
@@ -9,58 +10,68 @@
 		sendFriendRequest,
 		acceptFriendRequest,
 		rejectFriendRequest,
-		removeFriend
+		removeFriend,
+		subscribeFriendshipChanges,
+		unsubscribeFriendshipChanges
 	} from '$lib/friendships';
 
-	export let data: PageData;
+	let { data }: { data: PageData } = $props();
 
-	let friends: MyFriend[] = [];
-	let pendingReceived: PendingRequestReceived[] = [];
-	let pendingSent: PendingRequestSent[] = [];
-	let searchQuery = '';
-	let searchResults: any[] = [];
-	let searching = false;
-	let loading = true;
-	let showAddFriend = false;
-	let newFriendUsername = '';
-	let addFriendError = '';
-	let addFriendLoading = false;
+	// Derived values from data
+	let { supabase, session } = $derived(data);
 
-	// Active tab: 'friends' or 'requests'
-	let activeTab: 'friends' | 'requests' = 'friends';
+	// State variables
+	let friends = $state<MyFriend[]>([]);
+	let pendingReceived = $state<PendingRequestReceived[]>([]);
+	let pendingSent = $state<PendingRequestSent[]>([]);
+	let searchQuery = $state('');
+	let searchResults = $state<any[]>([]);
+	let searching = $state(false);
+	let loading = $state(true);
+	let activeTab = $state<'friends' | 'requests'>('friends');
+	let abortController = $state<AbortController | null>(null);
+	let realtimeChannel = $state<RealtimeChannel | null>(null);
 
-	let abortController: AbortController | null = null;
-
-	onMount(async () => {
-		await loadFriends();
-		loading = false;
+	// Reactive search
+	$effect(() => {
+		if (searchQuery.length >= 2) {
+			handleSearch();
+		} else {
+			searchResults = [];
+		}
 	});
 
-	async function loadFriends() {
-		// Cancel previous request if still running
-		if (abortController) {
-			abortController.abort();
+	onMount(() => {
+		console.log('🏠 Friends page mounted');
+		loading = true;
+		loadFriendsData();
+		loading = false;
+
+		// Setup Realtime subscription
+		if (session?.user?.id) {
+			console.log('📡 Setting up realtime subscription...');
+			realtimeChannel = subscribeFriendshipChanges(supabase, session.user.id, handleRealtimeUpdate);
 		}
 
-		abortController = new AbortController();
-
-		try {
-			friends = await getFriends(data.supabase);
-			pendingReceived = await getPendingRequestsReceived(data.supabase);
-			pendingSent = await getPendingRequestsSent(data.supabase);
-		} catch (error: any) {
-			if (error.name !== 'AbortError') {
-				console.error('Load friends error:', error);
+		// Cleanup on unmount
+		return () => {
+			if (abortController) {
+				abortController.abort();
 			}
-		}
-	}
+			if (realtimeChannel) {
+				console.log('🔌 Cleaning up realtime subscription');
+				unsubscribeFriendshipChanges(supabase, realtimeChannel);
+			}
+		};
+	});
 
-	// async function loadFriends() {
-	// 	friends = await getFriends(data.supabase);
-	// 	console.log('Friends:', friends);
-	// 	pendingReceived = await getPendingRequestsReceived(data.supabase);
-	// 	pendingSent = await getPendingRequestsSent(data.supabase);
-	// }
+	/**
+	 * Handle realtime updates - reload data when friendship changes occur
+	 */
+	function handleRealtimeUpdate() {
+		console.log('🔄 Realtime update received, reloading friends data...');
+		loadFriendsData();
+	}
 
 	async function handleSearch() {
 		if (searchQuery.trim().length < 2) {
@@ -69,14 +80,12 @@
 		}
 
 		searching = true;
-		const { data: profiles, error } = await data.supabase
+		const { data: profiles, error } = await supabase
 			.from('profiles')
 			.select('id, username, display_name')
 			.ilike('username', `%${searchQuery.trim()}%`)
-			.neq('id', data.session!.user.id)
+			.neq('id', session!.user.id)
 			.limit(10);
-
-		console.log('Search profiles:', profiles, error);
 
 		if (!error && profiles) {
 			// Filter out existing friends and pending requests
@@ -92,52 +101,61 @@
 		searching = false;
 	}
 
-	async function handleAddFriend() {
-		if (!newFriendUsername.trim()) return;
+	async function loadFriendsData() {
+		console.log('📥 Loading friends data...');
 
-		addFriendLoading = true;
-		addFriendError = '';
-
-		const result = await sendFriendRequest(
-			data.supabase,
-			data.session!.user.id,
-			newFriendUsername.trim()
-		);
-
-		if (result.success) {
-			newFriendUsername = '';
-			showAddFriend = false;
-			await loadFriends();
-		} else {
-			addFriendError = result.error || 'Failed to send request';
+		// Cancel previous request if still running
+		if (abortController) {
+			abortController.abort();
 		}
 
-		addFriendLoading = false;
+		abortController = new AbortController();
+
+		try {
+			// Load friends with profiles using your existing functions
+			const [loadedFriends, loadedReceived, loadedSent] = await Promise.all([
+				getFriends(supabase),
+				getPendingRequestsReceived(supabase),
+				getPendingRequestsSent(supabase)
+			]);
+
+			friends = loadedFriends;
+			pendingReceived = loadedReceived;
+			pendingSent = loadedSent;
+
+			console.log('✅ Loaded friends data:', {
+				friends: friends.length,
+				received: pendingReceived.length,
+				sent: pendingSent.length
+			});
+		} catch (error: any) {
+			if (error.name !== 'AbortError') {
+				console.error('❌ Load friends error:', error);
+			}
+		}
 	}
 
 	async function handleAcceptRequest(requesterId: string) {
-		const result = await acceptFriendRequest(data.supabase, data.session!.user.id, requesterId);
+		console.log('👍 Accepting friend request from:', requesterId);
+		const result = await acceptFriendRequest(supabase, session!.user.id, requesterId);
 
 		if (result.success) {
-			await loadFriends();
+			console.log('✅ Friend request accepted successfully');
+			// No need to manually reload - realtime will trigger update
+		} else {
+			console.error('❌ Failed to accept friend request:', result.error);
 		}
 	}
 
 	async function handleRejectRequest(requesterId: string) {
-		const result = await rejectFriendRequest(data.supabase, data.session!.user.id, requesterId);
+		console.log('👎 Rejecting friend request from:', requesterId);
+		const result = await rejectFriendRequest(supabase, session!.user.id, requesterId);
 
 		if (result.success) {
-			await loadFriends();
-		}
-	}
-
-	async function handleRemoveFriend(friendId: string, friendName: string) {
-		if (!confirm(`Remove ${friendName} as a friend?`)) return;
-
-		const result = await removeFriend(data.supabase, data.session!.user.id, friendId);
-
-		if (result.success) {
-			await loadFriends();
+			console.log('✅ Friend request rejected successfully');
+			// No need to manually reload - realtime will trigger update
+		} else {
+			console.error('❌ Failed to reject friend request:', result.error);
 		}
 	}
 
@@ -145,27 +163,29 @@
 		const profile = searchResults.find((p) => p.id === userId);
 		if (!profile) return;
 
-		const result = await sendFriendRequest(data.supabase, data.session!.user.id, profile.username);
+		const result = await sendFriendRequest(supabase, session!.user.id, profile.username);
 
 		if (result.success) {
 			searchQuery = '';
 			searchResults = [];
-			await loadFriends();
+			// No need to manually reload - realtime will trigger update
 		}
 	}
 
-	// Reactive search
-	$: if (searchQuery.length >= 2) {
-		handleSearch();
-	} else {
+	async function handleRemoveFriend(friendId: string, friendName: string) {
+		if (!confirm(`Remove ${friendName} as a friend?`)) return;
+
+		const result = await removeFriend(supabase, session!.user.id, friendId);
+
+		if (result.success) {
+			// No need to manually reload - realtime will trigger update
+		}
+	}
+
+	function clearSearch() {
+		searchQuery = '';
 		searchResults = [];
 	}
-
-	onDestroy(() => {
-		if (abortController) {
-			abortController.abort();
-		}
-	});
 </script>
 
 <svelte:head>
@@ -189,16 +209,7 @@
 					class="search-input"
 				/>
 				{#if searchQuery}
-					<button
-						class="clear-btn"
-						on:click={() => {
-							searchQuery = '';
-							searchResults = [];
-						}}
-						aria-label="Clear search"
-					>
-						✕
-					</button>
+					<button class="clear-btn" onclick={clearSearch} aria-label="Clear search"> ✕ </button>
 				{/if}
 			</div>
 
@@ -216,7 +227,7 @@
 								<div class="user-name">{result.display_name || result.username}</div>
 								<div class="user-username">@{result.username}</div>
 							</div>
-							<button class="add-btn" on:click={() => handleSendRequest(result.id)}> Add </button>
+							<button class="add-btn" onclick={() => handleSendRequest(result.id)}> Add </button>
 						</div>
 					{/each}
 				</div>
@@ -236,7 +247,7 @@
 			<button
 				class="tab"
 				class:active={activeTab === 'friends'}
-				on:click={() => (activeTab = 'friends')}
+				onclick={() => (activeTab = 'friends')}
 			>
 				Friends
 				<span class="tab-count">{friends.length}</span>
@@ -244,7 +255,7 @@
 			<button
 				class="tab"
 				class:active={activeTab === 'requests'}
-				on:click={() => (activeTab = 'requests')}
+				onclick={() => (activeTab = 'requests')}
 			>
 				Requests
 				{#if pendingReceived.length > 0}
@@ -293,7 +304,7 @@
 									{/if}
 									<button
 										class="menu-btn"
-										on:click={() =>
+										onclick={() =>
 											handleRemoveFriend(friend.friend_id, friend.display_name || friend.username)}
 										aria-label="Remove friend"
 									>
@@ -335,13 +346,13 @@
 								<div class="request-actions">
 									<button
 										class="accept-btn"
-										on:click={() => handleAcceptRequest(request.requester_id)}
+										onclick={() => handleAcceptRequest(request.requester_id)}
 									>
 										✓
 									</button>
 									<button
 										class="reject-btn"
-										on:click={() => handleRejectRequest(request.requester_id)}
+										onclick={() => handleRejectRequest(request.requester_id)}
 									>
 										✕
 									</button>
@@ -393,6 +404,7 @@
 </div>
 
 <style>
+	/* Same styles as before */
 	.friends-page {
 		min-height: 100%;
 		background: #000;
@@ -430,12 +442,10 @@
 		}
 	}
 
-	/* Search Section */
 	.search-section {
 		padding: 16px;
 		background: #000;
 		position: sticky;
-		/* top: 64px; */
 		z-index: 50;
 	}
 
@@ -490,7 +500,6 @@
 		color: #fff;
 	}
 
-	/* Search Results */
 	.search-results {
 		margin-top: 12px;
 		background: #0a0a0a;
@@ -519,7 +528,6 @@
 		color: #666;
 	}
 
-	/* Tabs */
 	.tabs {
 		display: flex;
 		gap: 8px;
@@ -567,12 +575,10 @@
 		font-weight: 700;
 	}
 
-	/* Content */
 	.content-section {
 		padding: 16px;
 	}
 
-	/* User Avatar */
 	.user-avatar {
 		width: 40px;
 		height: 40px;
@@ -628,7 +634,6 @@
 		transform: scale(1.05);
 	}
 
-	/* Friends List */
 	.friends-list {
 		display: flex;
 		flex-direction: column;
@@ -716,7 +721,6 @@
 		color: #fff;
 	}
 
-	/* Requests */
 	.requests-section {
 		margin-bottom: 24px;
 	}
@@ -821,7 +825,6 @@
 		font-weight: 700;
 	}
 
-	/* Empty State */
 	.empty-state {
 		text-align: center;
 		padding: 60px 20px;

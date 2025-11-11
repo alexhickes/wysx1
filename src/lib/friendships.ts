@@ -1,6 +1,7 @@
-// Helper functions for managing friendships with symmetric design
+// src/lib/friendships.ts
+// Helper functions for managing friendships with symmetric design + Realtime
 
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import type { MyFriend, PendingRequestReceived, PendingRequestSent } from './types';
 
 /**
@@ -9,6 +10,61 @@ import type { MyFriend, PendingRequestReceived, PendingRequestSent } from './typ
  */
 export function normalizeUserIds(userId1: string, userId2: string): [string, string] {
 	return userId1 < userId2 ? [userId1, userId2] : [userId2, userId1];
+}
+
+/**
+ * Setup realtime subscription for friendship changes
+ * This handles both INSERT and UPDATE events on the friendships table
+ */
+export function subscribeFriendshipChanges(
+	supabase: SupabaseClient,
+	currentUserId: string,
+	onFriendshipChange: () => void
+): RealtimeChannel {
+	const channel = supabase
+		.channel('friendship-realtime')
+		.on(
+			'postgres_changes',
+			{
+				event: '*', // Listen to INSERT, UPDATE, DELETE
+				schema: 'public',
+				table: 'friendships',
+				// Filter: match rows where current user is either user_id_1 or user_id_2
+				filter: `user_id_1=eq.${currentUserId}`
+			},
+			(payload) => {
+				console.log('🔔 Friendship change (user_id_1):', payload);
+				onFriendshipChange();
+			}
+		)
+		.on(
+			'postgres_changes',
+			{
+				event: '*',
+				schema: 'public',
+				table: 'friendships',
+				filter: `user_id_2=eq.${currentUserId}`
+			},
+			(payload) => {
+				console.log('🔔 Friendship change (user_id_2):', payload);
+				onFriendshipChange();
+			}
+		)
+		.subscribe((status) => {
+			console.log('📡 Realtime subscription status:', status);
+		});
+
+	return channel;
+}
+
+/**
+ * Cleanup realtime subscription
+ */
+export function unsubscribeFriendshipChanges(
+	supabase: SupabaseClient,
+	channel: RealtimeChannel
+): void {
+	supabase.removeChannel(channel);
 }
 
 /**

@@ -1,5 +1,5 @@
 // src/lib/groupInvitations.ts
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 
 export interface GroupInvitation {
 	id: string;
@@ -17,6 +17,61 @@ export interface InvitableFriend {
 	display_name: string | null;
 	already_invited: boolean;
 	is_member: boolean;
+}
+
+/**
+ * Setup realtime subscription for group invitation changes
+ */
+export function subscribeGroupInvitationChanges(
+	supabase: SupabaseClient,
+	currentUserId: string,
+	onInvitationChange: () => void
+): RealtimeChannel {
+	const channel = supabase
+		.channel('group-invitation-realtime')
+		.on(
+			'postgres_changes',
+			{
+				event: '*', // Listen to INSERT, UPDATE, DELETE
+				schema: 'public',
+				table: 'group_invitations',
+				// Filter: invitations where current user is the invitee
+				filter: `invitee_id=eq.${currentUserId}`
+			},
+			(payload) => {
+				console.log('🔔 Group invitation change (invitee):', payload);
+				onInvitationChange();
+			}
+		)
+		.on(
+			'postgres_changes',
+			{
+				event: '*',
+				schema: 'public',
+				table: 'group_invitations',
+				// Filter: invitations sent by current user
+				filter: `inviter_id=eq.${currentUserId}`
+			},
+			(payload) => {
+				console.log('🔔 Group invitation change (inviter):', payload);
+				onInvitationChange();
+			}
+		)
+		.subscribe((status) => {
+			console.log('📡 Group invitation subscription status:', status);
+		});
+
+	return channel;
+}
+
+/**
+ * Cleanup realtime subscription
+ */
+export function unsubscribeGroupInvitationChanges(
+	supabase: SupabaseClient,
+	channel: RealtimeChannel
+): void {
+	supabase.removeChannel(channel);
 }
 
 /**
@@ -153,38 +208,6 @@ export async function getMyPendingInvitations(
 		.order('created_at', { ascending: false });
 
 	return { data, error };
-
-	// const { data, error } = await supabase
-	// 	.from('group_invitations')
-	// 	.select(
-	// 		`
-	//   id,
-	//   group_id,
-	//   inviter_id,
-	//   created_at,
-	//   groups(
-	//     id,
-	//     name,
-	//     description,
-	//     is_public,
-	//     place:places(
-	//       id,
-	//       name,
-	//       place_type
-	//     )
-	//   ),
-	//   inviter:profiles!group_invitations_inviter_id_fkey(
-	//     id,
-	//     username,
-	//     display_name
-	//   )
-	// `
-	// 	)
-	// 	.eq('invitee_id', session.session.user.id)
-	// 	.eq('status', 'pending')
-	// 	.order('created_at', { ascending: false });
-
-	// return { data, error };
 }
 
 /**

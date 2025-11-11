@@ -1,17 +1,31 @@
-<!-- src/routes/(app)/+layout.svelte -->
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
 	import '../../app.css';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import type { LayoutData } from './$types';
 	import InvitationBadge from '$lib/components/InvitationBadge.svelte';
+	import { notifications } from '$lib/stores/notifications';
+	import {
+		syncPushSubscription,
+		subscribeToPushNotifications,
+		hasPushSubscription
+	} from '$lib/notifications';
+	import { startGeofencing, stopGeofencing, loadActiveCheckIns } from '$lib/geofence';
+	import { initializeQueueProcessor } from '$lib/offlineQueue';
 
-	export let data: LayoutData;
+	let { data } = $props();
+	let { supabase, session, user } = $derived(data);
 
-	$: profile = data.profile;
-	$: currentPath = $page.url.pathname;
+	// Get current path reactively
+	let currentPath = page.url.pathname;
+
+	// State
+	let notificationsEnabled = $state(false);
+	let geofencingActive = $state(false);
+	let showNotificationPrompt = $state(false);
+	let isOnline = $state(true);
+	let profile = $state<any>(null);
 
 	const navItems = [
 		{ path: '/home', label: 'Home', icon: '🏠' },
@@ -21,38 +35,191 @@
 	];
 
 	async function handleSignOut() {
-		await data.supabase.auth.signOut();
+		await supabase.auth.signOut();
 		goto('/');
 	}
 
-	let isPageVisible = true;
-
 	function handleVisibilityChange() {
-		isPageVisible = !document.hidden;
-
-		if (isPageVisible) {
-			// Page became visible again - refresh data if needed
-			console.log('Page visible again');
-		} else {
-			// Page hidden - cancel pending operations
-			console.log('Page hidden');
+		if (browser && document.visibilityState === 'visible' && user?.id) {
+			console.log('👀 App became visible');
+			// Supabase Realtime handles reconnection automatically
 		}
 	}
 
-	onMount(() => {
+	async function initializeUserFeatures() {
+		if (!user?.id) return;
+
+		console.log('🚀 Initializing user features for:', user.id);
+
+		// Initialize offline queue
+		initializeQueueProcessor(supabase);
+
+		// Load user profile
+		const { data: profileData } = await supabase
+			.from('profiles')
+			.select('*')
+			.eq('id', user.id)
+			.single();
+
+		profile = profileData;
+		console.log('User profile loaded:', profile);
+
+		// Sync push subscriptions
+		await syncPushSubscription(supabase, user.id);
+
+		// Check if user has push subscription
+		const hasSubscription = await hasPushSubscription(supabase, user.id);
+		notificationsEnabled = hasSubscription;
+
+		// Initialize realtime notifications
+		notifications.init(supabase, user.id);
+
+		// If user is sharing location, start geofencing
+		if (profile?.is_sharing) {
+			await startLocationSharing();
+		} else if (!hasSubscription && shouldShowPrompt()) {
+			// Show notification prompt after a few seconds if not enabled
+			setTimeout(() => {
+				showNotificationPrompt = true;
+			}, 3000);
+		}
+	}
+
+	async function startLocationSharing() {
+		if (!user?.id) return;
+
+		try {
+			// Enable notifications if not already enabled
+			if (!notificationsEnabled) {
+				const subscription = await subscribeToPushNotifications(supabase, user.id);
+				if (subscription) {
+					notificationsEnabled = true;
+					console.log('✅ Push notifications enabled');
+				}
+			}
+
+			// Load existing check-ins
+			await loadActiveCheckIns(supabase, user.id);
+
+			// Start geofencing
+			startGeofencing(supabase, user.id);
+			geofencingActive = true;
+
+			// Update profile
+			await supabase.from('profiles').update({ is_sharing: true }).eq('id', user.id);
+
+			console.log('✅ Location sharing started');
+		} catch (error) {
+			console.error('❌ Error starting location sharing:', error);
+		}
+	}
+
+	async function stopLocationSharing() {
+		if (!user?.id) return;
+
+		try {
+			stopGeofencing();
+			geofencingActive = false;
+
+			await supabase.from('profiles').update({ is_sharing: false }).eq('id', user.id);
+
+			console.log('✅ Location sharing stopped');
+		} catch (error) {
+			console.error('❌ Error stopping location sharing:', error);
+		}
+	}
+
+	function dismissNotificationPrompt() {
+		showNotificationPrompt = false;
+		if (browser) {
+			localStorage.setItem('notification-prompt-dismissed', Date.now().toString());
+		}
+	}
+
+	function shouldShowPrompt(): boolean {
+		if (!browser) return false;
+
+		const dismissed = localStorage.getItem('notification-prompt-dismissed');
+		if (!dismissed) return true;
+
+		const dismissedTime = parseInt(dismissed);
+		const dayInMs = 24 * 60 * 60 * 1000;
+		return Date.now() - dismissedTime > dayInMs;
+	}
+
+	async function enableNotifications() {
+		if (!user?.id) return;
+
+		const subscription = await subscribeToPushNotifications(supabase, user.id);
+		if (subscription) {
+			notificationsEnabled = true;
+			showNotificationPrompt = false;
+			console.log('✅ Notifications enabled');
+		} else {
+			console.error('❌ Failed to enable notifications');
+		}
+	}
+
+	onMount(async () => {
+		console.log('📱 App layout mounted');
+
+		// Monitor online/offline status
+		isOnline = navigator.onLine;
+		window.addEventListener('online', () => {
+			isOnline = true;
+			console.log('🌐 Connection restored');
+		});
+		window.addEventListener('offline', () => {
+			isOnline = false;
+			console.log('📡 Connection lost');
+		});
+
+		// Initialize user features
+		if (user?.id) {
+			await initializeUserFeatures();
+		}
+
+		// Listen for page visibility changes
 		if (browser) {
 			document.addEventListener('visibilitychange', handleVisibilityChange);
 		}
 	});
 
 	onDestroy(() => {
+		console.log('📱 App layout unmounting');
+
+		// Cleanup notifications
+		notifications.cleanup(supabase);
+
+		// Cleanup geofencing
+		if (geofencingActive) {
+			stopGeofencing();
+		}
+
+		// Remove event listeners
 		if (browser) {
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('online', () => {});
+			window.removeEventListener('offline', () => {});
 		}
 	});
 </script>
 
 <div class="app-shell">
+	<!-- Offline indicator -->
+	{#if !isOnline}
+		<div class="offline-banner">📡 You're offline. Changes will sync when reconnected.</div>
+	{/if}
+
+	<!-- Then in the template: -->
+	{#if showNotificationPrompt && user?.id}
+		<div class="notification-prompt">
+			<p>Enable notifications to stay updated with your friends' locations</p>
+			<button onclick={enableNotifications}>Enable</button>
+			<button onclick={dismissNotificationPrompt}>Maybe Later</button>
+		</div>
+	{/if}
+
 	<!-- Header -->
 	<header class="header">
 		<div class="header-content">
@@ -71,17 +238,17 @@
 			</h1>
 
 			<div class="header-actions">
-				<nav>
-					<InvitationBadge supabase={data.supabase} />
-				</nav>
-				<button class="icon-btn" on:click={() => goto('/settings/profile')} aria-label="Profile">
+				{#if user?.id}
+					<InvitationBadge {supabase} userId={user.id} />
+				{/if}
+				<button class="icon-btn" onclick={() => goto('/settings/profile')} aria-label="Profile">
 					<div class="avatar">
 						{profile?.display_name?.charAt(0)?.toUpperCase() ||
 							profile?.username?.charAt(0)?.toUpperCase() ||
 							'?'}
 					</div>
 				</button>
-				<button class="icon-btn" on:click={() => goto('/settings')} aria-label="Settings">
+				<button class="icon-btn" onclick={() => goto('/settings')} aria-label="Settings">
 					⚙️
 				</button>
 			</div>
@@ -111,11 +278,50 @@
 
 <style>
 	.app-shell {
-		/* display: flex; */
 		flex-direction: column;
 		height: 100vh;
 		background: #000;
 		color: #fff;
+	}
+
+	.offline-banner {
+		background: #ff6b35;
+		color: white;
+		padding: 8px;
+		text-align: center;
+		font-size: 14px;
+		font-weight: 600;
+	}
+
+	.notification-prompt {
+		background: #1a1a1a;
+		border-bottom: 1px solid #333;
+		padding: 16px;
+		text-align: center;
+	}
+
+	.notification-prompt p {
+		margin: 0 0 12px 0;
+		font-size: 14px;
+	}
+
+	.notification-prompt button {
+		margin: 0 8px;
+		padding: 8px 16px;
+		border-radius: 8px;
+		border: none;
+		cursor: pointer;
+		font-weight: 600;
+	}
+
+	.notification-prompt button:first-of-type {
+		background: var(--color-primary);
+		color: white;
+	}
+
+	.notification-prompt button:last-of-type {
+		background: transparent;
+		color: #999;
 	}
 
 	/* Header */
@@ -182,7 +388,7 @@
 		flex: 1;
 		overflow-y: auto;
 		background: #000;
-		padding-bottom: 70px; /* Space for bottom nav */
+		padding-bottom: 70px;
 	}
 
 	/* Bottom Navigation */
