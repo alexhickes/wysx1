@@ -110,13 +110,29 @@ export type CheckIn = {
 // VIEW TYPES (For Supabase Views)
 // ============================================
 
-export type MyFriend = {
+// export type MyFriend = {
+// 	friend_id: string;
+// 	username: string;
+// 	display_name: string | null;
+// 	is_sharing: boolean;
+// 	friends_since: string;
+// };
+
+export interface MyFriend {
 	friend_id: string;
 	username: string;
 	display_name: string | null;
-	is_sharing: boolean;
 	friends_since: string;
-};
+	is_sharing: boolean;
+	// New fields:
+	current_location?: {
+		id: string;
+		name: string;
+		place_type: string;
+	} | null;
+	location_name?: string | null;
+	checked_in_at?: string;
+}
 
 export type PendingRequestReceived = {
 	user_id_1: string;

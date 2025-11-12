@@ -1,3 +1,4 @@
+<!-- src/routes/(app)/home/+page.svelte -->
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -22,6 +23,8 @@
 	let loading = $state(true);
 	let friendCheckInChannel = $state<RealtimeChannel | null>(null);
 	let myCheckInChannel = $state<RealtimeChannel | null>(null);
+	// Add this new state variable
+	let upcomingVisits = $state<any[]>([]);
 
 	// Group friend check-ins by place
 	let friendsCheckInsGrouped = $derived(groupCheckInsByPlace(friendCheckIns));
@@ -49,7 +52,12 @@
 		console.log('🏠 Home page mounted');
 
 		// Load initial data
-		await Promise.all([loadActiveCheckIns(), loadFriendCheckIns(), loadRecentActivity()]);
+		await Promise.all([
+			loadActiveCheckIns(),
+			loadFriendCheckIns(),
+			loadUpcomingVisits(),
+			loadRecentActivity()
+		]);
 
 		// Setup Realtime for friends' check-ins
 		if (data.session?.user?.id) {
@@ -231,6 +239,99 @@
 	// 	// For now, showing all active check-ins except yours
 	// 	friendCheckIns = checkIns || [];
 	// }
+
+	// Add this new function
+	async function loadUpcomingVisits() {
+		// First, get list of friend IDs
+		const { data: friendships } = await data.supabase.from('my_friends').select('friend_id');
+
+		const friendIds = friendships?.map((f) => f.friend_id) || [];
+		const allUserIds = [data.session.user.id, ...friendIds];
+
+		// Get all upcoming planned visits from me and friends
+		const { data: visits, error } = await data.supabase
+			.from('planned_visits')
+			.select(
+				`
+				*,
+				profiles:user_id(username, display_name),
+				places(id, name, place_type),
+				planned_visit_groups(
+					groups(id, name)
+				)
+			`
+			)
+			.in('user_id', allUserIds)
+			.is('cancelled_at', null)
+			.gte('planned_at', new Date().toISOString())
+			.order('planned_at', { ascending: true })
+			.limit(10);
+
+		if (!error && visits) {
+			// Filter based on group visibility
+			const filteredVisits = await Promise.all(
+				visits.map(async (visit) => {
+					// Always show my own visits
+					if (visit.user_id === data.session.user.id) {
+						return visit;
+					}
+
+					// Show if no groups specified (public to all)
+					if (!visit.planned_visit_groups || visit.planned_visit_groups.length === 0) {
+						return visit;
+					}
+
+					// Check if I'm in any of the visit's groups
+					const groupIds = visit.planned_visit_groups.map((pvg: any) => pvg.groups.id);
+					const { data: membership } = await data.supabase
+						.from('group_members')
+						.select('group_id')
+						.eq('user_id', data.session.user.id)
+						.in('group_id', groupIds)
+						.limit(1);
+
+					return membership && membership.length > 0 ? visit : null;
+				})
+			);
+
+			upcomingVisits = filteredVisits.filter((v) => v !== null);
+		}
+	}
+
+	// Add this helper function
+	function formatUpcomingDate(dateStr: string) {
+		const date = new Date(dateStr);
+		const now = new Date();
+		const tomorrow = new Date(now);
+		tomorrow.setDate(tomorrow.getDate() + 1);
+
+		const isToday = date.toDateString() === now.toDateString();
+		const isTomorrow = date.toDateString() === tomorrow.toDateString();
+
+		if (isToday) {
+			return `Today at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+		} else if (isTomorrow) {
+			return `Tomorrow at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+		} else {
+			const daysUntil = Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+			return `${date.toLocaleDateString('en-US', {
+				weekday: 'short',
+				month: 'short',
+				day: 'numeric'
+			})} at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+		}
+	}
+
+	function isMyVisit(visit: any) {
+		return visit.user_id === data.session?.user.id;
+	}
+
+	function getVisitGroups(visit: any): string[] {
+		if (!visit.planned_visit_groups || visit.planned_visit_groups.length === 0) {
+			return [];
+		}
+		return visit.planned_visit_groups.map((pvg: any) => pvg.groups.name);
+	}
 
 	async function loadRecentActivity() {
 		const { data: checkIns } = await data.supabase
@@ -437,6 +538,71 @@
 				</div>
 			</section>
 		{/if}
+
+		<!-- Upcoming Visits Section -->
+		<section class="upcoming-section">
+			<h2 class="section-title">📅 Upcoming visits</h2>
+
+			{#if upcomingVisits.length === 0}
+				<div class="empty-state-small">
+					<p>No upcoming visits planned</p>
+				</div>
+			{:else}
+				<div class="upcoming-list">
+					{#each upcomingVisits as visit (visit.id)}
+						<div
+							class="upcoming-card"
+							class:my-visit={isMyVisit(visit)}
+							role="button"
+							tabindex="0"
+							onclick={() => goToPlace(visit.places.id)}
+							onkeydown={(e) => e.key === 'Enter' && goToPlace(visit.places.id)}
+						>
+							<div class="upcoming-header">
+								<div class="place-icon-small">
+									{getPlaceIcon(visit.places.place_type)}
+								</div>
+								<div class="upcoming-info">
+									<div class="upcoming-place-name">{visit.places.name}</div>
+									<div class="upcoming-time">
+										🕐 {formatUpcomingDate(visit.planned_at)}
+									</div>
+								</div>
+							</div>
+
+							<div class="upcoming-details">
+								<div class="upcoming-user">
+									<div class="user-avatar-small">
+										{visit.profiles?.display_name?.charAt(0)?.toUpperCase() ||
+											visit.profiles?.username?.charAt(0)?.toUpperCase() ||
+											'?'}
+									</div>
+									<span class="user-name-small">
+										{isMyVisit(visit)
+											? 'You'
+											: visit.profiles?.display_name || visit.profiles?.username}
+									</span>
+								</div>
+
+								{#if getVisitGroups(visit).length > 0}
+									<div class="visit-groups-tags">
+										{#each getVisitGroups(visit) as groupName}
+											<span class="group-tag-small">{groupName}</span>
+										{/each}
+									</div>
+								{/if}
+							</div>
+
+							{#if visit.notes}
+								<div class="visit-notes-home">
+									"{visit.notes}"
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</section>
 
 		<!-- Recent Activity Feed -->
 		<section class="activity-section">
@@ -921,6 +1087,162 @@
 		.activity-badge,
 		.group-tag {
 			order: 3;
+		}
+	}
+
+	.upcoming-section {
+		padding: 20px 16px;
+		border-top: 1px solid #1a1a1a;
+	}
+
+	.upcoming-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.upcoming-card {
+		background: #0a0a0a;
+		border: 1px solid #1a1a1a;
+		border-radius: 12px;
+		padding: 14px;
+		cursor: pointer;
+		transition: all 0.2s;
+		animation: fadeIn 0.3s ease-out;
+	}
+
+	.upcoming-card.my-visit {
+		border-color: rgba(252, 76, 2, 0.3);
+		background: rgba(252, 76, 2, 0.05);
+	}
+
+	.upcoming-card:hover {
+		border-color: var(--color-primary);
+		transform: translateY(-2px);
+		box-shadow: 0 4px 12px rgba(252, 76, 2, 0.15);
+	}
+
+	.upcoming-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin-bottom: 12px;
+	}
+
+	.place-icon-small {
+		width: 40px;
+		height: 40px;
+		background: #1a1a1a;
+		border-radius: 10px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 20px;
+		flex-shrink: 0;
+	}
+
+	.upcoming-info {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.upcoming-place-name {
+		font-size: 15px;
+		font-weight: 700;
+		color: #fff;
+		margin-bottom: 4px;
+	}
+
+	.upcoming-time {
+		font-size: 13px;
+		color: var(--color-primary);
+		font-weight: 600;
+	}
+
+	.upcoming-details {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-bottom: 8px;
+	}
+
+	.upcoming-user {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.user-avatar-small {
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 700;
+		color: #fff;
+		font-size: 12px;
+		flex-shrink: 0;
+	}
+
+	.user-name-small {
+		font-size: 13px;
+		font-weight: 600;
+		color: #fff;
+	}
+
+	.visit-groups-tags {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.group-tag-small {
+		font-size: 11px;
+		padding: 3px 8px;
+		background: rgba(252, 76, 2, 0.15);
+		border: 1px solid rgba(252, 76, 2, 0.3);
+		color: var(--color-primary);
+		border-radius: 8px;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.visit-notes-home {
+		font-size: 13px;
+		color: #999;
+		font-style: italic;
+		padding-top: 8px;
+		border-top: 1px solid #1a1a1a;
+		line-height: 1.4;
+	}
+
+	/* Update existing empty-state-small if needed */
+	.empty-state-small {
+		text-align: center;
+		padding: 40px 20px;
+		background: #0a0a0a;
+		border: 1px solid #1a1a1a;
+		border-radius: 12px;
+	}
+
+	.empty-state-small p {
+		font-size: 14px;
+		color: #666;
+		margin: 0;
+	}
+
+	@media (max-width: 768px) {
+		.upcoming-details {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
+		.visit-groups-tags {
+			width: 100%;
 		}
 	}
 </style>

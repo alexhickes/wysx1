@@ -68,6 +68,45 @@ export function unsubscribeFriendshipChanges(
 }
 
 /**
+ * Setup realtime subscription for profile changes (sharing status)
+ * Listens to changes in profiles table to detect when friends go online/offline
+ */
+export function subscribeProfileChanges(
+	supabase: SupabaseClient,
+	onProfileChange: (payload: any) => void
+): RealtimeChannel {
+	const channel = supabase
+		.channel('profile-realtime')
+		.on(
+			'postgres_changes',
+			{
+				event: 'UPDATE',
+				schema: 'public',
+				table: 'profiles'
+			},
+			(payload) => {
+				console.log('🔔 Profile changed (sharing status):', payload);
+				onProfileChange(payload);
+			}
+		)
+		.subscribe((status) => {
+			console.log('📡 Profile subscription status:', status);
+		});
+
+	return channel;
+}
+
+/**
+ * Cleanup profile realtime subscription
+ */
+export function unsubscribeProfileChanges(
+	supabase: SupabaseClient,
+	channel: RealtimeChannel
+): void {
+	supabase.removeChannel(channel);
+}
+
+/**
  * Send a friend request
  */
 export async function sendFriendRequest(
@@ -158,7 +197,7 @@ export async function sendFriendRequest(
 }
 
 /**
- * Get all accepted friends using the view
+ * Get all accepted friends with their current check-in location
  */
 export async function getFriends(supabase: SupabaseClient): Promise<MyFriend[]> {
 	const { data, error } = await supabase
@@ -171,7 +210,81 @@ export async function getFriends(supabase: SupabaseClient): Promise<MyFriend[]> 
 		return [];
 	}
 
-	return data || [];
+	if (!data || data.length === 0) return [];
+
+	// Get current user to check visibility permissions
+	const {
+		data: { user }
+	} = await supabase.auth.getUser();
+	if (!user) return data;
+
+	// Get active check-ins for all friends
+	const friendIds = data.map((f) => f.friend_id);
+
+	const { data: checkIns } = await supabase
+		.from('check_ins')
+		.select(
+			`
+			id,
+			user_id,
+			place_id,
+			checked_in_at,
+			place:places(
+				id,
+				name,
+				place_type
+			),
+			group_id
+		`
+		)
+		.in('user_id', friendIds)
+		.is('checked_out_at', null);
+
+	// Match check-ins with friends and check visibility
+	const friendsWithLocation = await Promise.all(
+		data.map(async (friend) => {
+			const checkIn = checkIns?.find((ci) => ci.user_id === friend.friend_id);
+
+			if (!checkIn) {
+				return { ...friend, current_location: null, location_name: null };
+			}
+
+			// Check if we have visibility to this check-in
+			// If it's in a group, check if we're a member
+			if (checkIn.group_id) {
+				const { data: membership } = await supabase
+					.from('group_members')
+					.select('group_id')
+					.eq('group_id', checkIn.group_id)
+					.eq('user_id', user.id)
+					.single();
+
+				if (membership) {
+					return {
+						...friend,
+						current_location: checkIn.place,
+						location_name: checkIn.place?.name || null,
+						checked_in_at: checkIn.checked_in_at
+					};
+				}
+			}
+
+			// If not in a group, check if the place is public or we have access
+			// For now, we'll assume if they're sharing (is_sharing=true), we can see it
+			if (friend.is_sharing) {
+				return {
+					...friend,
+					current_location: checkIn.place,
+					location_name: checkIn.place?.name || null,
+					checked_in_at: checkIn.checked_in_at
+				};
+			}
+
+			return { ...friend, current_location: null, location_name: null };
+		})
+	);
+
+	return friendsWithLocation;
 }
 
 /**

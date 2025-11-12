@@ -12,8 +12,11 @@
 		rejectFriendRequest,
 		removeFriend,
 		subscribeFriendshipChanges,
-		unsubscribeFriendshipChanges
+		unsubscribeFriendshipChanges,
+		subscribeProfileChanges,
+		unsubscribeProfileChanges
 	} from '$lib/friendships';
+	import { subscribeCheckInChanges, unsubscribeCheckInChanges } from '$lib/checkins';
 
 	let { data }: { data: PageData } = $props();
 
@@ -31,6 +34,8 @@
 	let activeTab = $state<'friends' | 'requests'>('friends');
 	let abortController = $state<AbortController | null>(null);
 	let realtimeChannel = $state<RealtimeChannel | null>(null);
+	let profileChannel = $state<RealtimeChannel | null>(null);
+	let checkInChannel = $state<RealtimeChannel | null>(null);
 
 	// Reactive search
 	$effect(() => {
@@ -51,6 +56,25 @@
 		if (session?.user?.id) {
 			console.log('📡 Setting up realtime subscription...');
 			realtimeChannel = subscribeFriendshipChanges(supabase, session.user.id, handleRealtimeUpdate);
+
+			// Setup profile changes subscription (for sharing status)
+			console.log('📡 Setting up profile subscription...');
+			profileChannel = subscribeProfileChanges(supabase, handleProfileUpdate);
+
+			// Setup check-in changes subscription (to show current location)
+			console.log('📡 Setting up check-in subscription...');
+			checkInChannel = supabase
+				.channel('friend-checkins')
+				.on(
+					'postgres_changes',
+					{
+						event: '*',
+						schema: 'public',
+						table: 'check_ins'
+					},
+					handleCheckInUpdate
+				)
+				.subscribe();
 		}
 
 		// Cleanup on unmount
@@ -62,6 +86,14 @@
 				console.log('🔌 Cleaning up realtime subscription');
 				unsubscribeFriendshipChanges(supabase, realtimeChannel);
 			}
+			if (profileChannel) {
+				console.log('🔌 Cleaning up profile subscription');
+				unsubscribeProfileChanges(supabase, profileChannel);
+			}
+			if (checkInChannel) {
+				console.log('🔌 Cleaning up check-in subscription');
+				supabase.removeChannel(checkInChannel);
+			}
 		};
 	});
 
@@ -71,6 +103,38 @@
 	function handleRealtimeUpdate() {
 		console.log('🔄 Realtime update received, reloading friends data...');
 		loadFriendsData();
+	}
+
+	/**
+	 * Handle profile updates - reload when sharing status changes
+	 */
+	function handleProfileUpdate(payload: any) {
+		console.log('🔄 Profile update received:', payload.new);
+
+		// Check if the updated profile is one of our friends
+		const updatedUserId = payload.new.id;
+		const isFriend = friends.some((f) => f.friend_id === updatedUserId);
+
+		if (isFriend) {
+			console.log('✅ Friend sharing status changed, reloading...');
+			loadFriendsData();
+		}
+	}
+
+	/**
+	 * Handle check-in updates - reload when friends check in/out
+	 */
+	function handleCheckInUpdate(payload: any) {
+		console.log('🔄 Check-in update received:', payload);
+
+		// Check if the check-in is from one of our friends
+		const userId = payload.new?.user_id || payload.old?.user_id;
+		const isFriend = friends.some((f) => f.friend_id === userId);
+
+		if (isFriend) {
+			console.log('✅ Friend location changed, reloading...');
+			loadFriendsData();
+		}
 	}
 
 	async function handleSearch() {
@@ -297,8 +361,10 @@
 									</div>
 								</div>
 								<div class="friend-actions">
-									{#if friend.is_sharing}
-										<span class="status-badge online">🟢 Sharing</span>
+									{#if friend.location_name}
+										<span class="status-badge location">
+											📍 {friend.location_name}
+										</span>
 									{:else}
 										<span class="status-badge offline">⚫ Offline</span>
 									{/if}
@@ -698,9 +764,10 @@
 		white-space: nowrap;
 	}
 
-	.status-badge.online {
-		color: #4caf50;
-		background: rgba(76, 175, 80, 0.1);
+	.status-badge.location {
+		color: var(--color-primary);
+		background: rgba(252, 76, 2, 0.1);
+		border: 1px solid rgba(252, 76, 2, 0.3);
 	}
 
 	.status-badge.offline {

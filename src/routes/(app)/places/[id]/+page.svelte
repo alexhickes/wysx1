@@ -58,13 +58,33 @@
 
 	const placeId = $page.params.id ?? '';
 
+	// Add these new variables for planned visits
+	let showPlannedVisitForm = false;
+	let plannedVisits: any[] = [];
+	let loadingPlannedVisits = false;
+
+	let newVisit = {
+		date: '',
+		time: '',
+		selectedGroups: [] as string[],
+		notes: ''
+	};
+	let creatingVisit = false;
+	let visitError = '';
+
+	// Get tomorrow's date as minimum
+	let minDate = new Date();
+	minDate.setDate(minDate.getDate() + 1);
+	const minDateString = minDate.toISOString().split('T')[0];
+
+	// Update your onMount to include planned visits
 	onMount(async () => {
 		await loadPlace();
 		await loadGroups();
 		await loadActivities();
+		await loadPlannedVisits(); // Add this line
 		loading = false;
 
-		// Initialize map after loading is complete and DOM is ready
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		await initMap();
 	});
@@ -485,6 +505,196 @@
 	function getTotalMembers(): number {
 		return groups.reduce((sum, group) => sum + getGroupMemberCount(group), 0);
 	}
+
+	// Add these new functions
+	async function loadPlannedVisits() {
+		loadingPlannedVisits = true;
+
+		const { data: visits, error } = await data.supabase
+			.from('planned_visits')
+			.select(
+				`
+				*,
+				profiles:user_id(username, display_name),
+				planned_visit_groups(
+					groups(id, name)
+				)
+			`
+			)
+			.eq('place_id', placeId)
+			.is('cancelled_at', null)
+			.gte('planned_at', new Date().toISOString())
+			.order('planned_at', { ascending: true });
+
+		if (!error && visits) {
+			// Filter visits based on group membership
+			const filteredVisits = await Promise.all(
+				visits.map(async (visit) => {
+					// Always show if user created it
+					if (visit.user_id === data.session.user.id) {
+						return visit;
+					}
+
+					// Show to everyone if no groups specified
+					if (!visit.planned_visit_groups || visit.planned_visit_groups.length === 0) {
+						return visit;
+					}
+
+					// Check if user is in any of the visit's groups
+					const groupIds = visit.planned_visit_groups.map((pvg: any) => pvg.groups.id);
+					const { data: membership } = await data.supabase
+						.from('group_members')
+						.select('group_id')
+						.eq('user_id', data.session.user.id)
+						.in('group_id', groupIds)
+						.limit(1);
+
+					return membership && membership.length > 0 ? visit : null;
+				})
+			);
+
+			plannedVisits = filteredVisits.filter((v) => v !== null);
+		}
+
+		loadingPlannedVisits = false;
+	}
+
+	function openPlannedVisitForm() {
+		const tomorrow = new Date();
+		tomorrow.setDate(tomorrow.getDate() + 1);
+		newVisit.date = tomorrow.toISOString().split('T')[0];
+		newVisit.time = '14:00';
+		newVisit.selectedGroups = [];
+
+		showPlannedVisitForm = true;
+		visitError = '';
+	}
+
+	function toggleGroup(groupId: string) {
+		if (newVisit.selectedGroups.includes(groupId)) {
+			newVisit.selectedGroups = newVisit.selectedGroups.filter((id) => id !== groupId);
+		} else {
+			newVisit.selectedGroups = [...newVisit.selectedGroups, groupId];
+		}
+	}
+
+	function selectAllGroups() {
+		newVisit.selectedGroups = groups.map((g) => g.id);
+	}
+
+	function deselectAllGroups() {
+		newVisit.selectedGroups = [];
+	}
+
+	async function createPlannedVisit() {
+		if (!newVisit.date || !newVisit.time) {
+			visitError = 'Please select date and time';
+			return;
+		}
+
+		creatingVisit = true;
+		visitError = '';
+
+		try {
+			const plannedAt = new Date(`${newVisit.date}T${newVisit.time}`);
+
+			if (plannedAt < new Date()) {
+				visitError = 'Please select a future date and time';
+				creatingVisit = false;
+				return;
+			}
+
+			// Create the planned visit
+			const { data: visit, error } = await data.supabase
+				.from('planned_visits')
+				.insert({
+					user_id: data.session.user.id,
+					place_id: placeId,
+					planned_at: plannedAt.toISOString(),
+					notes: newVisit.notes.trim() || null
+				})
+				.select()
+				.single();
+
+			if (error) throw error;
+
+			// Link selected groups
+			if (newVisit.selectedGroups.length > 0) {
+				const { error: groupsError } = await data.supabase.from('planned_visit_groups').insert(
+					newVisit.selectedGroups.map((groupId) => ({
+						planned_visit_id: visit.id,
+						group_id: groupId
+					}))
+				);
+
+				if (groupsError) {
+					console.error('Error linking groups:', groupsError);
+				}
+			}
+
+			// Reset form
+			newVisit = {
+				date: '',
+				time: '',
+				selectedGroups: [],
+				notes: ''
+			};
+			showPlannedVisitForm = false;
+
+			// Reload visits
+			await loadPlannedVisits();
+		} catch (error: any) {
+			visitError = error.message || 'Failed to create planned visit';
+		} finally {
+			creatingVisit = false;
+		}
+	}
+
+	async function cancelPlannedVisit(visitId: string) {
+		const { error } = await data.supabase
+			.from('planned_visits')
+			.update({ cancelled_at: new Date().toISOString() })
+			.eq('id', visitId);
+
+		if (!error) {
+			await loadPlannedVisits();
+		}
+	}
+
+	function formatVisitDate(dateStr: string) {
+		const date = new Date(dateStr);
+		const now = new Date();
+		const tomorrow = new Date(now);
+		tomorrow.setDate(tomorrow.getDate() + 1);
+
+		const isToday = date.toDateString() === now.toDateString();
+		const isTomorrow = date.toDateString() === tomorrow.toDateString();
+
+		if (isToday) {
+			return `Today at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+		} else if (isTomorrow) {
+			return `Tomorrow at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+		} else {
+			return date.toLocaleDateString('en-US', {
+				weekday: 'short',
+				month: 'short',
+				day: 'numeric',
+				hour: 'numeric',
+				minute: '2-digit'
+			});
+		}
+	}
+
+	function isMyVisit(visit: any) {
+		return visit.user_id === data.session?.user.id;
+	}
+
+	function getVisitGroups(visit: any): string[] {
+		if (!visit.planned_visit_groups || visit.planned_visit_groups.length === 0) {
+			return [];
+		}
+		return visit.planned_visit_groups.map((pvg: any) => pvg.groups.name);
+	}
 </script>
 
 <svelte:head>
@@ -678,6 +888,84 @@
 					</div>
 				</div>
 
+				<!-- In your HTML, add this section after the stats-grid and before activities -->
+				<!-- Insert this in the "View Mode" section (inside the {:else} block after editing check) -->
+
+				<!-- Planned Visits Section (add after stats-grid) -->
+				{#if !editing}
+					<div class="section">
+						<div class="section-header">
+							<h2>📅 Planned Visits</h2>
+							<button class="plan-visit-btn" on:click={openPlannedVisitForm}> + Plan Visit </button>
+						</div>
+
+						{#if loadingPlannedVisits}
+							<div class="loading-small">
+								<div class="spinner-small"></div>
+							</div>
+						{:else if plannedVisits.length === 0}
+							<div class="empty-state-small">
+								<p>No upcoming visits planned</p>
+								<p class="hint">
+									Be the first to plan a visit and let others know when you'll be here!
+								</p>
+							</div>
+						{:else}
+							<div class="visits-list">
+								{#each plannedVisits as visit}
+									<div class="visit-card" class:my-visit={isMyVisit(visit)}>
+										<div class="visit-header">
+											<div class="visit-user">
+												<div class="user-avatar">
+													{visit.profiles?.display_name?.[0] ||
+														visit.profiles?.username?.[0] ||
+														'?'}
+												</div>
+												<div class="user-info">
+													<div class="username">
+														{visit.profiles?.display_name || visit.profiles?.username}
+														{#if isMyVisit(visit)}
+															<span class="you-badge">You</span>
+														{/if}
+													</div>
+													{#if getVisitGroups(visit).length > 0}
+														<div class="visit-groups">
+															{#each getVisitGroups(visit) as groupName}
+																<span class="group-pill">{groupName}</span>
+															{/each}
+														</div>
+													{:else}
+														<div class="visit-group-public">Visible to all groups</div>
+													{/if}
+												</div>
+											</div>
+											{#if isMyVisit(visit)}
+												<button
+													class="cancel-visit-btn"
+													on:click={() => cancelPlannedVisit(visit.id)}
+													title="Cancel visit"
+												>
+													×
+												</button>
+											{/if}
+										</div>
+
+										<div class="visit-time">
+											🕐 {formatVisitDate(visit.planned_at)}
+										</div>
+
+										{#if visit.notes}
+											<div class="visit-notes">
+												"{visit.notes}"
+											</div>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 				<!-- Activities -->
 				{#if place.place_activities && place.place_activities.length > 0}
 					<div class="section">
@@ -858,6 +1146,99 @@
 					</div>
 				</div>
 			{/if}
+		</div>
+	{/if}
+
+	<!-- Planned Visit Form Modal (add at the end before closing tag) -->
+	{#if showPlannedVisitForm}
+		<div class="modal-overlay" on:click={() => (showPlannedVisitForm = false)}>
+			<div class="modal" on:click|stopPropagation>
+				<div class="modal-header">
+					<h3>Plan a Visit</h3>
+					<button class="close-modal-btn" on:click={() => (showPlannedVisitForm = false)}>×</button>
+				</div>
+
+				<div class="modal-content">
+					{#if visitError}
+						<div class="error-message">{visitError}</div>
+					{/if}
+
+					<div class="form-group">
+						<label for="visit-date">Date *</label>
+						<input id="visit-date" type="date" bind:value={newVisit.date} min={minDateString} />
+					</div>
+
+					<div class="form-group">
+						<label for="visit-time">Time *</label>
+						<input id="visit-time" type="time" bind:value={newVisit.time} />
+					</div>
+
+					{#if groups.length > 0}
+						<div class="form-group">
+							<div class="group-selector-header">
+								<label>Share with groups</label>
+								<div class="group-selector-actions">
+									<button type="button" class="select-action" on:click={selectAllGroups}>
+										All
+									</button>
+									<button type="button" class="select-action" on:click={deselectAllGroups}>
+										None
+									</button>
+								</div>
+							</div>
+							<div class="group-selector-hint">
+								Select which groups can see your visit. If none selected, all groups can see it.
+							</div>
+							<div class="groups-checkboxes">
+								{#each groups as group}
+									<label class="group-checkbox-item">
+										<input
+											type="checkbox"
+											checked={newVisit.selectedGroups.includes(group.id)}
+											on:change={() => toggleGroup(group.id)}
+										/>
+										<span class="group-checkbox-label">
+											<span class="group-name">{group.name}</span>
+										</span>
+									</label>
+								{/each}
+							</div>
+						</div>
+					{/if}
+
+					<div class="form-group">
+						<label for="visit-notes">Notes (optional)</label>
+						<textarea
+							id="visit-notes"
+							placeholder="e.g., Bringing my new board! Anyone want to join?"
+							bind:value={newVisit.notes}
+							rows="3"
+							maxlength="200"
+						></textarea>
+						<div class="char-count">
+							{newVisit.notes.length}/200
+						</div>
+					</div>
+				</div>
+
+				<div class="modal-actions">
+					<button class="cancel-btn" on:click={() => (showPlannedVisitForm = false)}>
+						Cancel
+					</button>
+					<button
+						class="submit-btn"
+						on:click={createPlannedVisit}
+						disabled={creatingVisit || !newVisit.date || !newVisit.time}
+					>
+						{#if creatingVisit}
+							<span class="spinner-small"></span>
+							Planning...
+						{:else}
+							Plan Visit
+						{/if}
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>
@@ -1519,5 +1900,441 @@
 
 	:global(.leaflet-tile) {
 		filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+	}
+
+	/* Add these styles to your existing <style> block */
+
+	/* Planned Visits Section */
+	.plan-visit-btn {
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
+		color: #fff;
+		border: none;
+		padding: 8px 16px;
+		border-radius: 8px;
+		font-size: 14px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.plan-visit-btn:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 4px 12px rgba(252, 76, 2, 0.4);
+	}
+
+	.loading-small {
+		display: flex;
+		justify-content: center;
+		padding: 20px;
+	}
+
+	.spinner-small {
+		width: 20px;
+		height: 20px;
+		border: 2px solid #333;
+		border-top-color: var(--color-primary);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		display: inline-block;
+	}
+
+	.empty-state-small {
+		text-align: center;
+		padding: 32px 20px;
+		background: #0a0a0a;
+		border-radius: 12px;
+		border: 1px solid #1a1a1a;
+	}
+
+	.empty-state-small p {
+		margin: 0 0 4px 0;
+		color: #666;
+	}
+
+	.hint {
+		font-size: 14px;
+		color: #555;
+	}
+
+	.visits-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.visit-card {
+		background: #0a0a0a;
+		border: 1px solid #1a1a1a;
+		border-radius: 10px;
+		padding: 14px;
+		transition: all 0.2s;
+	}
+
+	.visit-card.my-visit {
+		border-color: rgba(252, 76, 2, 0.3);
+		background: rgba(252, 76, 2, 0.05);
+	}
+
+	.visit-card:hover {
+		border-color: #333;
+	}
+
+	.visit-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		margin-bottom: 10px;
+	}
+
+	.visit-user {
+		display: flex;
+		gap: 10px;
+		align-items: center;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.user-avatar {
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: #fff;
+		font-weight: 700;
+		font-size: 16px;
+		text-transform: uppercase;
+		flex-shrink: 0;
+	}
+
+	.user-info {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.username {
+		font-weight: 600;
+		color: #fff;
+		font-size: 15px;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.you-badge {
+		background: rgba(252, 76, 2, 0.2);
+		color: var(--color-primary);
+		padding: 2px 8px;
+		border-radius: 10px;
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
+	.visit-groups {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		margin-top: 4px;
+	}
+
+	.group-pill {
+		background: rgba(252, 76, 2, 0.15);
+		border: 1px solid rgba(252, 76, 2, 0.3);
+		color: var(--color-primary);
+		padding: 2px 8px;
+		border-radius: 10px;
+		font-size: 11px;
+		font-weight: 600;
+	}
+
+	.visit-group-public {
+		font-size: 12px;
+		color: #666;
+		margin-top: 2px;
+	}
+
+	.cancel-visit-btn {
+		background: transparent;
+		border: 1px solid #333;
+		color: #666;
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		font-size: 20px;
+		line-height: 1;
+		cursor: pointer;
+		transition: all 0.2s;
+		padding: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+	}
+
+	.cancel-visit-btn:hover {
+		background: #f44336;
+		border-color: #f44336;
+		color: #fff;
+	}
+
+	.visit-time {
+		background: rgba(252, 76, 2, 0.1);
+		border: 1px solid rgba(252, 76, 2, 0.2);
+		color: var(--color-primary);
+		padding: 8px 12px;
+		border-radius: 8px;
+		font-size: 14px;
+		font-weight: 600;
+		margin-bottom: 8px;
+		display: inline-block;
+	}
+
+	.visit-notes {
+		color: #999;
+		font-size: 14px;
+		font-style: italic;
+		margin-top: 8px;
+		padding-top: 8px;
+		border-top: 1px solid #1a1a1a;
+	}
+
+	/* Modal */
+	.modal-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.85);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+		padding: 20px;
+		animation: fadeIn 0.2s;
+	}
+
+	@keyframes fadeIn {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+
+	.modal {
+		background: #0a0a0a;
+		border: 1px solid #1a1a1a;
+		border-radius: 16px;
+		width: 100%;
+		max-width: 480px;
+		max-height: 90vh;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		animation: slideUp 0.3s;
+	}
+
+	@keyframes slideUp {
+		from {
+			opacity: 0;
+			transform: translateY(20px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	.modal-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 20px 24px;
+		border-bottom: 1px solid #1a1a1a;
+	}
+
+	.modal-header h3 {
+		margin: 0;
+		font-size: 20px;
+		color: #fff;
+	}
+
+	.close-modal-btn {
+		background: transparent;
+		border: none;
+		color: #666;
+		font-size: 32px;
+		line-height: 1;
+		cursor: pointer;
+		padding: 0;
+		width: 32px;
+		height: 32px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 50%;
+		transition: all 0.2s;
+	}
+
+	.close-modal-btn:hover {
+		background: #1a1a1a;
+		color: #fff;
+	}
+
+	.modal-content {
+		padding: 24px;
+		overflow-y: auto;
+	}
+
+	.error-message {
+		background: rgba(244, 67, 54, 0.1);
+		border: 1px solid #f44336;
+		color: #f44336;
+		padding: 12px;
+		border-radius: 8px;
+		margin-bottom: 20px;
+		font-size: 14px;
+	}
+
+	.char-count {
+		text-align: right;
+		font-size: 12px;
+		color: #666;
+		margin-top: 4px;
+	}
+
+	/* Group Selector */
+	.group-selector-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 4px;
+	}
+
+	.group-selector-actions {
+		display: flex;
+		gap: 8px;
+	}
+
+	.select-action {
+		background: transparent;
+		border: 1px solid #333;
+		color: var(--color-primary);
+		padding: 4px 12px;
+		border-radius: 6px;
+		font-size: 12px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.select-action:hover {
+		border-color: var(--color-primary);
+		background: rgba(252, 76, 2, 0.1);
+	}
+
+	.group-selector-hint {
+		font-size: 12px;
+		color: #666;
+		margin-bottom: 12px;
+		line-height: 1.4;
+	}
+
+	.groups-checkboxes {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.group-checkbox-item {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 12px;
+		background: #000;
+		border: 1px solid #333;
+		border-radius: 8px;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.group-checkbox-item:hover {
+		border-color: var(--color-primary);
+		background: rgba(252, 76, 2, 0.05);
+	}
+
+	.group-checkbox-item input[type='checkbox'] {
+		width: 20px;
+		height: 20px;
+		margin: 0;
+		cursor: pointer;
+		accent-color: var(--color-primary);
+		flex-shrink: 0;
+	}
+
+	.group-checkbox-label {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.group-name {
+		color: #fff;
+		font-size: 14px;
+		font-weight: 500;
+	}
+
+	.modal-actions {
+		display: flex;
+		gap: 12px;
+		padding: 20px 24px;
+		border-top: 1px solid #1a1a1a;
+	}
+
+	.submit-btn {
+		flex: 1;
+		padding: 14px 24px;
+		border-radius: 8px;
+		font-size: 15px;
+		font-weight: 600;
+		cursor: pointer;
+		border: none;
+		transition: all 0.2s;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		background: linear-gradient(135deg, var(--color-primary) 0%, #ff6b35 100%);
+		color: #fff;
+	}
+
+	.submit-btn:hover:not(:disabled) {
+		transform: translateY(-2px);
+		box-shadow: 0 8px 20px rgba(252, 76, 2, 0.4);
+	}
+
+	.submit-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+		transform: none;
+	}
+
+	/* Responsive */
+	@media (max-width: 640px) {
+		.modal {
+			max-height: 100vh;
+			border-radius: 0;
+		}
+
+		.user-info {
+			max-width: calc(100% - 80px);
+		}
 	}
 </style>
